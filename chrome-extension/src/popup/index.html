@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>SWU AI Trainer</h1>
+      <span id="connection-status" class="status-dot offline"></span>
+    </header>
+
+    <section id="status-section" class="card">
+      <div class="stat-row"><span>Recorded Games</span><span id="game-count">0</span></div>
+      <div class="stat-row"><span>Trained Games</span><span id="trained-count">0</span></div>
+      <div class="stat-row"><span>Model Accuracy</span><span id="model-accuracy">--</span></div>
+      <div class="stat-row"><span>Active Game</span><span id="active-game">No</span></div>
+      <div class="stat-row"><span>Page Connected</span><span id="page-status">No</span></div>
+    </section>
+
+    <section id="controls-section" class="card">
+      <label class="toggle-row">
+        <span>Record Games</span>
+        <input type="checkbox" id="toggle-recording" checked>
+        <span class="toggle-slider"></span>
+      </label>
+      <label class="toggle-row">
+        <span>Show AI Recommendations</span>
+        <input type="checkbox" id="toggle-ai-play" disabled>
+        <span class="toggle-slider"></span>
+      </label>
+    </section>
+
+    <section id="actions-section" class="card">
+      <button id="btn-train" class="btn primary">Train Model Now</button>
+      <button id="btn-trigger-ai" class="btn secondary" disabled>Trigger AI Move</button>
+      <button id="btn-export" class="btn secondary">Export Data</button>
+      <button id="btn-clear" class="btn danger">Clear All Data</button>
+      <button id="btn-diag" class="btn secondary">Diagnose WebSocket</button>
+    </section>
+    <section id="diag-section" class="card" style="display:none;font-size:11px;word-break:break-all;">
+      <div id="diag-content"></div>
+    </section>
+
+    <section id="log-section" class="card">
+      <div id="log"></div>
+    </section>
+  </div>
+  <script src="index.js"></script>
+</body>
+</html>
