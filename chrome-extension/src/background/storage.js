@@ -63,6 +63,21 @@ async function getGameRecordingCount() {
   });
 }
 
+async function markAllGamesUntrained() {
+  const db = await openSWUDB();
+  const tx = db.transaction('games', 'readwrite');
+  const store = tx.objectStore('games');
+  const all = await new Promise((resolve) => {
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+  });
+  for (const game of all) {
+    game.trained = false;
+    store.put(game);
+  }
+  return new Promise((resolve) => { tx.oncomplete = () => resolve(); });
+}
+
 async function markGamesTrained(gameIds) {
   const db = await openSWUDB();
   const tx = db.transaction('games', 'readwrite');

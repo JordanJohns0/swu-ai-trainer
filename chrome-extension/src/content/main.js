@@ -4,6 +4,7 @@ if (!window.__swuAiPatched) {
   window.__swuAiConnections = [];
   window.__swuAiLastEvent = null;
   window.__swuAiLastMsg = null;
+  window.__swuAiGameSocket = false;
 
   var gameSocket = null;
   var OrigWebSocket = window.WebSocket;
@@ -14,7 +15,7 @@ if (!window.__swuAiPatched) {
     window.__swuAiConnections.push({ url: String(url).slice(0, 120), isGame: isGame, ts: Date.now() });
 
     if (isGame) {
-      window.__swuAiReached = 2;
+      window.__swuAiGameSocket = true;
       gameSocket = ws;
       var origSend = ws.send.bind(ws);
 
@@ -44,6 +45,8 @@ if (!window.__swuAiPatched) {
           window.__swuAiLastEvent = { name: name, ts: Date.now() };
           if (name === 'gamestate' || name === 'lobbystate') {
             window.postMessage({ source: 'swu-ai-inject', payload: { type: name === 'gamestate' ? 'GAMESTATE' : 'LOBBYSTATE', data: payload } }, '*');
+          } else if (name) {
+            window.postMessage({ source: 'swu-ai-inject', payload: { type: 'GAME_EVENT', name: name, data: payload } }, '*');
           }
         }
       });
@@ -75,6 +78,7 @@ if (!window.__swuAiPatched) {
     if (p && p.type === 'DIAG_REQUEST') {
       window.postMessage({ source: 'swu-ai-inject', payload: { type: 'DIAG_RESULT', data: {
         reached: window.__swuAiReached,
+        gameSocket: window.__swuAiGameSocket,
         conns: (window.__swuAiConnections||[]).slice(-5),
         lastEvent: window.__swuAiLastEvent,
         lastMsg: window.__swuAiLastMsg,

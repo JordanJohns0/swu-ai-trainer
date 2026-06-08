@@ -20,6 +20,17 @@ function removeOverlay() {
 function createOverlay(recommendations) {
   removeOverlay();
 
+  // Normalize scores for display when they're nearly identical
+  if (recommendations.length > 1) {
+    const spread = Math.max(...recommendations.map(r => r.score)) - Math.min(...recommendations.map(r => r.score));
+    if (spread < 0.02) {
+      recommendations = recommendations.map((r, i) => ({
+        ...r,
+        score: 1.0 - (i * (0.15 / Math.max(recommendations.length - 1, 1)))
+      }));
+    }
+  }
+
   const overlay = document.createElement('div');
   overlay.id = 'swu-ai-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;';

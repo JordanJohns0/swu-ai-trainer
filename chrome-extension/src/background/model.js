@@ -1,5 +1,6 @@
 const MAX_CARDS_IN_ZONE = 5;
-const NUM_SCALAR_FEATURES = 32;
+const NUM_SCALAR_FEATURES = 40;
+const SELECT_CARD_MODES = ['resource', 'target', 'defend', 'discard', 'play', 'attack', 'select'];
 const CARD_FEATURE_COUNT = 10 * MAX_CARDS_IN_ZONE * 7;
 const STATE_SIZE = NUM_SCALAR_FEATURES + CARD_FEATURE_COUNT;
 const ACTION_FEATURE_SIZE = 64;
@@ -59,6 +60,17 @@ function encodeScalarFeatures(gameState, me, opp, mine, theirs) {
   f.push(normalize((theirs.spaceArena || []).length, 10));
   f.push(+(gameState.initiativeClaimed || false));
   f.push(+(me.isActionPhaseActivePlayer || false));
+
+  const mode = (me?.promptState?.selectCardMode || 'none').toLowerCase();
+  let found = false;
+  for (const known of SELECT_CARD_MODES) {
+    const match = mode.includes(known);
+    f.push(+match);
+    if (match) found = true;
+  }
+  f.push(+(!found && mode !== 'none'));
+  f.push(normalize(me?.promptState?.promptType ?? 0, 10));
+
   while (f.length < NUM_SCALAR_FEATURES) f.push(0);
   return new Float64Array(f);
 }
@@ -186,10 +198,13 @@ class Layer {
     }
     const dz = new Float64Array(this.outSize);
     for (let o = 0; o < this.outSize; o++) {
-      const da = a[o] - target[o];
-      if (this.activation === 'sigmoid') dz[o] = da * a[o] * (1 - a[o]);
-      else if (this.activation === 'relu') dz[o] = da * (z[o] > 0 ? 1 : 0);
-      else dz[o] = da;
+      if (this.activation === 'sigmoid') {
+        dz[o] = a[o] - target[o];
+      } else if (this.activation === 'relu') {
+        dz[o] = target[o] * (z[o] > 0 ? 1 : 0);
+      } else {
+        dz[o] = target[o];
+      }
     }
     const dw = new Float64Array(this.inSize * this.outSize);
     for (let o = 0; o < this.outSize; o++) {
@@ -297,7 +312,33 @@ function selectTopActions(model, stateTensor, actionFeatures, actionDescriptors,
   n = n || 3;
   const scored = actionFeatures.map((af, i) => ({ score: model.forward(stateTensor, af), action: actionDescriptors[i] }));
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, Math.min(n, scored.length));
+  const top = scored.slice(0, Math.min(n, scored.length));
+
+  // If scores are nearly identical, diversify to show a mix of action types
+  if (top.length > 1) {
+    const maxScore = top[0].score;
+    const minScore = top[top.length - 1].score;
+    if (maxScore - minScore < 0.01) {
+      const diversified = [];
+      const groups = {};
+      for (const s of scored) {
+        const key = s.action.type === 'cardClicked' ? 'card' : (s.action.arg === 'pass' ? 'pass' : 'menu');
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(s);
+      }
+      for (const key of ['card', 'menu']) {
+        if (diversified.length < n && groups[key]?.length > 0) {
+          diversified.push(groups[key].shift());
+        }
+      }
+      for (const s of scored) {
+        if (diversified.length >= n) break;
+        if (!diversified.includes(s)) diversified.push(s);
+      }
+      return diversified;
+    }
+  }
+  return top;
 }
 
 async function trainModel(model, stateBuffer, actionBuffer, labelBuffer, epochs = 5) {

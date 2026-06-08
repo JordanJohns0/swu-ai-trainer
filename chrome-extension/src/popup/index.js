@@ -105,11 +105,12 @@ $id('btn-diag').addEventListener('click', async () => {
   if (diag) {
     section.style.display = 'block';
     el.innerHTML = `
-      <div>Injection reached: ${diag.reached ?? 'unknown'}</div>
+      <div>Injection: ${diag.reached ?? 'unknown'} (game socket: ${diag.gameSocket ? 'yes' : 'no'})</div>
       <div>Last event: ${diag.lastEvent ? diag.lastEvent.name + ' @ ' + new Date(diag.lastEvent.ts).toLocaleTimeString() : 'none'}</div>
       <div>Last msg prefix: ${diag.lastMsg ? diag.lastMsg.prefix + ' (' + diag.lastMsg.len + ' bytes)' : 'none'}</div>
       <div>Connections: ${(diag.conns || []).map(c => c.url + ' game=' + c.isGame).join('<br>') || 'none'}</div>
       <div style="margin-top:4px">Actions: ${(diag.buttons || []).map(b => b.type + ':' + (b.arg || b.cardId || '?') + (b.command ? '('+b.command+')' : '')).join(', ') || 'none'}</div>
+      <div style="margin-top:4px">Unknown event: ${diag.lastUnknownEvent ? diag.lastUnknownEvent.name + ' keys=' + (diag.lastUnknownEvent.data ? Object.keys(diag.lastUnknownEvent.data).join(',') : 'null') : 'none'}</div>
     `;
     log('Diagnosis complete');
   } else {
