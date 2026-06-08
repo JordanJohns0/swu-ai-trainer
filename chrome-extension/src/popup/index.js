@@ -24,6 +24,20 @@ async function refreshStatus() {
   $id('toggle-recording').checked = status.enabled !== false;
   $id('connection-status').className = 'status-dot ' + (connection?.pageOk && (status.activeGame || status.recordings > 0) ? 'online' : 'offline');
 
+  $id('toggle-requeue').checked = status.autoRequeue === true;
+  $id('toggle-auto-train').checked = status.autoTrain === true;
+  $id('toggle-auto-play').checked = status.autoPlay === true;
+
+  $id('wait-section').style.display = status.autoPlay ? 'block' : 'none';
+  if (status.autoPlay) {
+    const minSec = (status.minWait ?? 1000) / 1000;
+    const maxSec = (status.maxWait ?? 3000) / 1000;
+    $id('min-wait').value = minSec;
+    $id('max-wait').value = maxSec;
+    $id('min-wait-val').textContent = minSec.toFixed(1) + 's';
+    $id('max-wait-val').textContent = maxSec.toFixed(1) + 's';
+  }
+
   const canTriggerAi = status.isAiPlaying && status.activeGame;
   $id('toggle-ai-play').disabled = false;
   $id('toggle-ai-play').checked = status.isAiPlaying;
@@ -44,8 +58,49 @@ $id('toggle-recording').addEventListener('change', async (e) => {
 $id('toggle-ai-play').addEventListener('change', async (e) => {
   const enabled = e.target.checked;
   await bg.sendMessage({ type: 'TOGGLE_AI_PLAY', enabled });
+  log(enabled ? 'Show AI recommendations enabled' : 'Show AI recommendations disabled');
+  refreshStatus();
+});
+
+$id('toggle-requeue').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  await bg.sendMessage({ type: 'TOGGLE_AUTO_REQUEUE', enabled });
+  log(enabled ? 'Auto requeue enabled' : 'Auto requeue disabled');
+});
+
+$id('toggle-auto-train').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  await bg.sendMessage({ type: 'TOGGLE_AUTO_TRAIN', enabled });
+  log(enabled ? 'Auto-train after game enabled' : 'Auto-train after game disabled');
+});
+
+$id('toggle-auto-play').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  await bg.sendMessage({ type: 'TOGGLE_AUTO_PLAY', enabled });
   log(enabled ? 'AI auto-play enabled' : 'AI auto-play disabled');
   refreshStatus();
+});
+
+function saveWaitTime() {
+  const min = Math.round(parseFloat($id('min-wait').value) * 1000);
+  const max = Math.round(parseFloat($id('max-wait').value) * 1000);
+  bg.sendMessage({ type: 'SET_WAIT_TIME', min, max });
+}
+
+$id('min-wait').addEventListener('input', function() {
+  const val = parseFloat(this.value);
+  $id('min-wait-val').textContent = val.toFixed(1) + 's';
+  const max = parseFloat($id('max-wait').value);
+  if (val > max) { $id('max-wait').value = val; $id('max-wait-val').textContent = val.toFixed(1) + 's'; }
+  saveWaitTime();
+});
+
+$id('max-wait').addEventListener('input', function() {
+  const val = parseFloat(this.value);
+  $id('max-wait-val').textContent = val.toFixed(1) + 's';
+  const min = parseFloat($id('min-wait').value);
+  if (val < min) { $id('min-wait').value = val; $id('min-wait-val').textContent = val.toFixed(1) + 's'; }
+  saveWaitTime();
 });
 
 $id('btn-train').addEventListener('click', async () => {
@@ -109,8 +164,11 @@ $id('btn-diag').addEventListener('click', async () => {
       <div>Last event: ${diag.lastEvent ? diag.lastEvent.name + ' @ ' + new Date(diag.lastEvent.ts).toLocaleTimeString() : 'none'}</div>
       <div>Last msg prefix: ${diag.lastMsg ? diag.lastMsg.prefix + ' (' + diag.lastMsg.len + ' bytes)' : 'none'}</div>
       <div>Connections: ${(diag.conns || []).map(c => c.url + ' game=' + c.isGame).join('<br>') || 'none'}</div>
-      <div style="margin-top:4px">Actions: ${(diag.buttons || []).map(b => b.type + ':' + (b.arg || b.cardId || '?') + (b.command ? '('+b.command+')' : '')).join(', ') || 'none'}</div>
+      <div style="margin-top:4px">Actions: ${(diag.buttons || []).map(b => b.type + ':' + (b.text ?? b.arg ?? b.cardId ?? '?') + (b.command ? '('+b.command+')' : '') + (b.uuid ? ' u:'+b.uuid.slice(0,8) : '')).join(', ') || 'none'}</div>
+      <div>Prompt UUID: ${diag.promptUuid || 'none'}</div>
+      <div>Raw buttons: ${diag.rawButtons ? diag.rawButtons.map(b => JSON.stringify(b)).join(' | ') : 'none'}</div>
       <div style="margin-top:4px">Unknown event: ${diag.lastUnknownEvent ? diag.lastUnknownEvent.name + ' keys=' + (diag.lastUnknownEvent.data ? Object.keys(diag.lastUnknownEvent.data).join(',') : 'null') : 'none'}</div>
+      <div style="margin-top:4px">Last send: ${diag.lastSend ? (diag.lastSend.ok ? 'OK' : 'FAIL') + ' event=' + (diag.lastSend.event || '?') + ' args=' + JSON.stringify(diag.lastSend.args) + (diag.lastSend.reason ? ' reason=' + diag.lastSend.reason : '') + ' readyState=' + diag.lastSend.readyState : 'none'}</div>
     `;
     log('Diagnosis complete');
   } else {

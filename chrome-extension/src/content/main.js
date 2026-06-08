@@ -5,6 +5,7 @@ if (!window.__swuAiPatched) {
   window.__swuAiLastEvent = null;
   window.__swuAiLastMsg = null;
   window.__swuAiGameSocket = false;
+  window.__swuAiLastSend = null;
 
   var gameSocket = null;
   var OrigWebSocket = window.WebSocket;
@@ -72,8 +73,8 @@ if (!window.__swuAiPatched) {
     if (p && p.type === 'EXECUTE_ACTION') {
       var a = p.action;
       if (a.type === 'cardClicked') return swuAiSend('game', 'cardClicked', a.cardId);
-      if (a.type === 'menuButton') return swuAiSend('game', 'menuButton', a.arg||'', a.uuid||'', a.command||'');
-      if (a.type === 'pass') return swuAiSend('game', 'menuButton', 'pass', '', '');
+      if (a.type === 'menuButton') return swuAiSend('game', 'menuButton', a.arg ?? '', a.uuid ?? '');
+      if (a.type === 'pass') return swuAiSend('game', 'menuButton', 'pass', '');
     }
     if (p && p.type === 'DIAG_REQUEST') {
       window.postMessage({ source: 'swu-ai-inject', payload: { type: 'DIAG_RESULT', data: {
@@ -82,18 +83,25 @@ if (!window.__swuAiPatched) {
         conns: (window.__swuAiConnections||[]).slice(-5),
         lastEvent: window.__swuAiLastEvent,
         lastMsg: window.__swuAiLastMsg,
-        error: window.__swuAiError
+        error: window.__swuAiError,
+        lastSend: window.__swuAiLastSend
       } } }, '*');
     }
   });
 }
 
 function swuAiSend(eventName) {
-  if (!gameSocket || gameSocket.readyState !== 1) return false;
+  var readyState = gameSocket ? gameSocket.readyState : -1;
+  if (!gameSocket || readyState !== 1) {
+    window.__swuAiLastSend = { action: null, event: eventName, args: Array.prototype.slice.call(arguments, 1), ok: false, reason: 'socket not open', readyState: readyState, ts: Date.now() };
+    return false;
+  }
   var args = Array.prototype.slice.call(arguments, 1);
   var parts = ['42["' + eventName + '"'];
   for (var i = 0; i < args.length; i++) { parts.push(','); parts.push(JSON.stringify(args[i])); }
   parts.push(']');
-  gameSocket.send(parts.join(''));
+  var msgStr = parts.join('');
+  gameSocket.send(msgStr);
+  window.__swuAiLastSend = { action: null, event: eventName, args: args, ok: true, msg: msgStr, ts: Date.now() };
   return true;
 }

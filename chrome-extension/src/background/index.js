@@ -1,3 +1,4 @@
+console.log('SWU AI BG VERSION 4');
 importScripts('storage.js');
 importScripts('model.js');
 
@@ -5,10 +6,35 @@ let currentGameRecording = null;
 let gameCount = 0;
 let isAiPlaying = false;
 let aiPauseRequested = false;
+let autoRequeue = false;
+let autoTrain = false;
+let autoPlay = false;
+let pendingAutoPlay = false;
+let minWait = 1000;
+let maxWait = 3000;
 let pendingRecommendations = null;
 let lastUnknownEvent = null;
+let lastTabId = null;
+let failedActionKeys = new Set();
+let lastSentActionKey = null;
+let lastSentStateHash = null;
+
+function getActionKey(action) {
+  return action.type + ':' + (action.arg ?? action.cardId ?? '');
+}
+
+function getActionSetHash(gameState) {
+  const actions = getAvailableActions(gameState);
+  return actions.map(a => getActionKey(a)).sort().join('|');
+}
+
+// Load persistent settings
+getSetting('minWait', 1000).then(v => minWait = v).catch(() => {});
+getSetting('maxWait', 3000).then(v => maxWait = v).catch(() => {});
+getSetting('autoTrain', false).then(v => autoTrain = v).catch(() => {});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.tab?.id) lastTabId = sender.tab.id;
   (async () => {
     try {
       if (msg.type === 'FROM_PAGE') {
@@ -20,7 +46,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const recordings = await getGameRecordingCount();
         const stats = await getTrainingStats();
         const enabled = await getSetting('recordingEnabled', true);
-        sendResponse({ recordings, stats, enabled, isAiPlaying, gameCount, activeGame: !!currentGameRecording });
+        sendResponse({ recordings, stats, enabled, isAiPlaying, autoPlay, autoRequeue, autoTrain, gameCount, activeGame: !!currentGameRecording, minWait, maxWait });
         return;
       }
       if (msg.type === 'TOGGLE_RECORDING') {
@@ -35,6 +61,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
         return;
       }
+      if (msg.type === 'TOGGLE_AUTO_REQUEUE') {
+        autoRequeue = msg.enabled;
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'TOGGLE_AUTO_TRAIN') {
+        autoTrain = msg.enabled;
+        await saveSetting('autoTrain', autoTrain);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'TOGGLE_AUTO_PLAY') {
+        autoPlay = msg.enabled;
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'SET_WAIT_TIME') {
+        minWait = Math.max(100, msg.min ?? 1000);
+        maxWait = Math.max(minWait, Math.min(30000, msg.max ?? 3000));
+        await saveSetting('minWait', minWait);
+        await saveSetting('maxWait', maxWait);
+        sendResponse({ ok: true });
+        return;
+      }
       if (msg.type === 'REQUEST_AI_PLAY') {
         if (!currentGameRecording) { sendResponse({ ok: false, error: 'No active game' }); return; }
         await sendRecommendations(currentGameRecording);
@@ -42,9 +92,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       if (msg.type === 'ACTION_CHOSEN') {
-        const idx = msg.index;
-        if (pendingRecommendations && idx >= 0 && idx < pendingRecommendations.length) {
-          await sendActionToTab(pendingRecommendations[idx]);
+        const action = msg.action;
+        if (action) {
+          await sendActionToTab(action);
+        } else {
+          console.warn('ACTION_CHOSEN received without action object');
         }
         pendingRecommendations = null;
         sendResponse({ ok: true });
@@ -81,7 +133,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const result = globalThis.__swuAiDiag || {};
         if (currentGameRecording) {
           const last = currentGameRecording.states[currentGameRecording.states.length - 1]?.state;
-          if (last) result.buttons = getAvailableActions(last).map(a => ({ type: a.type, arg: a.arg, command: a.command, cardId: a.cardId }));
+          if (last) result.buttons = getAvailableActions(last).map(a => ({ type: a.type, arg: a.arg, command: a.command, cardId: a.cardId, text: a.text, uuid: a.uuid }));
+          // Also include raw promptState for diagnosis
+          for (const pid of Object.keys(last.players || {})) {
+            const ps = last.players[pid]?.promptState;
+            if (ps?.buttons?.length > 0) {
+              result.promptUuid = ps.promptUuid;
+              result.rawButtons = ps.buttons.map((b, bi) => ({ index: bi, ...Object.fromEntries(Object.entries(b).filter(([_, v]) => v != null)) }));
+              break;
+            }
+          }
         }
         result.lastUnknownEvent = lastUnknownEvent;
         sendResponse({ ok: true, data: result });
@@ -113,9 +174,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function handlePageMessage(payload) {
   const { type, data, event, args } = payload;
 
+  const shouldAct = (isAiPlaying || autoPlay) && currentGameRecording;
+
   if (type === 'LOBBYSTATE' && data) {
     if (data.gameOngoing && !currentGameRecording) startNewRecording(data);
-    if (isAiPlaying && !aiPauseRequested && currentGameRecording) {
+    if (shouldAct) {
       await sendRecommendations(currentGameRecording);
     }
   }
@@ -124,10 +187,19 @@ async function handlePageMessage(payload) {
     lastUnknownEvent = null;
     if (!currentGameRecording) startNewRecording(data);
     if (currentGameRecording) {
+      if (!currentGameRecording.playerId && data?.players) {
+        for (const [id, p] of Object.entries(data.players)) {
+          const ps = p.promptState;
+          if (ps && ps.promptType != null && ps.promptType !== '') {
+            currentGameRecording.playerId = id;
+            break;
+          }
+        }
+      }
       currentGameRecording.states.push({ state: data, timestamp: Date.now() });
       if (data.winners && data.winners.length > 0) await finalizeRecording(data.winners, data);
     }
-    if (isAiPlaying && !aiPauseRequested && currentGameRecording) {
+    if (shouldAct) {
       await sendRecommendations(currentGameRecording);
     }
   }
@@ -147,10 +219,19 @@ async function handlePageMessage(payload) {
     if (eventData.players) {
       if (!currentGameRecording) startNewRecording(eventData);
       if (currentGameRecording) {
+        if (!currentGameRecording.playerId && eventData?.players) {
+          for (const [id, p] of Object.entries(eventData.players)) {
+            const ps = p.promptState;
+            if (ps && ps.promptType != null && ps.promptType !== '') {
+              currentGameRecording.playerId = id;
+              break;
+            }
+          }
+        }
         currentGameRecording.states.push({ state: eventData, timestamp: Date.now() });
         if (eventData.winners && eventData.winners.length > 0) await finalizeRecording(eventData.winners, eventData);
       }
-      if (isAiPlaying && !aiPauseRequested && currentGameRecording) {
+      if (shouldAct) {
         await sendRecommendations(currentGameRecording);
       }
       return;
@@ -175,24 +256,26 @@ async function handlePageMessage(payload) {
           if (buttons.length === 0 && objectOptions) {
             for (const [k, v] of Object.entries(eventData.options)) {
               const label = typeof v === 'string' ? v : (v?.text || v?.label || v?.name || k);
-              buttons.push({ text: label, arg: v?.arg || v?.action || v?.value || k });
+              buttons.push({ text: label, arg: String(v?.arg ?? v?.action ?? v?.value ?? k), uuid: String(v?.uuid ?? '') });
             }
           } else if (buttons.length === 0 && objectChoices) {
             for (const [k, v] of Object.entries(eventData.choices)) {
               const label = typeof v === 'string' ? v : (v?.text || v?.label || v?.name || k);
-              buttons.push({ text: label, arg: v?.arg || v?.action || v?.value || k });
+              buttons.push({ text: label, arg: String(v?.arg ?? v?.action ?? v?.value ?? k), uuid: String(v?.uuid ?? '') });
             }
           }
           const wrapped = JSON.parse(JSON.stringify(lastState));
           wrapped.players[activeId] = wrapped.players[activeId] || {};
+          const origPrompt = wrapped.players[activeId]?.promptState ?? {};
           wrapped.players[activeId].promptState = {
             promptType: eventData.promptType ?? 1,
+            promptUuid: eventData.promptUuid || origPrompt.promptUuid || '',
             buttons: buttons,
             selectCardMode: eventData.selectCardMode || ''
           };
           lastUnknownEvent = null;
           currentGameRecording.states.push({ state: wrapped, timestamp: Date.now() });
-          if (isAiPlaying && !aiPauseRequested) {
+          if (isAiPlaying || autoPlay) {
             await sendRecommendations(currentGameRecording);
           }
           return;
@@ -213,6 +296,7 @@ function startNewRecording(data) {
     gameId: `game_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now(),
     gameNumber: gameCount,
+    playerId: null,
     states: [],
     actions: [],
     winner: null,
@@ -225,43 +309,73 @@ async function finalizeRecording(winners, data) {
   if (!currentGameRecording) return;
   currentGameRecording.winner = winners;
   currentGameRecording.completedAt = Date.now();
-  await saveGameRecording(currentGameRecording);
+  const recording = currentGameRecording;
+  await saveGameRecording(recording);
   if (data?.id) lastFinalizedGameId = data.id;
   currentGameRecording = null;
+  failedActionKeys.clear();
+  lastSentActionKey = null;
+  lastSentStateHash = null;
+
+  // Auto-train before requeue
+  if (autoTrain) {
+    console.log('finalizeRecording: auto-training on game');
+    await trainOnGame(recording);
+  }
+
+  // Auto-requeue: wait for the "Game ended" DOM to render, then click Requeue
+  if (autoRequeue && lastTabId) {
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.sendMessage(lastTabId, { type: 'CLICK_REQUEUE' });
+      } catch (e) {
+        console.warn('Auto-requeue send failed:', e);
+      }
+    }, 2000);
+  }
 }
 
 async function sendActionToTab(action) {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'INJECT_AND_EXECUTE', action }).catch(() => {});
+  const tabId = lastTabId;
+  if (!tabId) { console.warn('sendActionToTab: no tab ID available'); return; }
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'INJECT_AND_EXECUTE', action });
+  } catch (e) {
+    console.warn('sendActionToTab failed:', e);
+  }
 }
 
 async function selectAiAction(recording) {
   try {
     const latestState = recording.states[recording.states.length - 1]?.state;
-    if (!latestState) return null;
+    if (!latestState) { console.log('selectAiAction: no latest state'); return null; }
 
-    const seqAction = trySequences(latestState);
-    if (seqAction) return seqAction;
+    const seqAction = await trySequences(latestState);
+    if (seqAction) { console.log('selectAiAction: sequence returned', getActionKey(seqAction)); return seqAction; }
 
     const resourceAction = await cardToResource(latestState);
-    if (resourceAction) return resourceAction;
+    if (resourceAction) { console.log('selectAiAction: cardToResource returned', getActionKey(resourceAction)); return resourceAction; }
 
     const actions = getAvailableActions(latestState);
+    console.log('selectAiAction: no sequence or resource action, falling through to model', { actionsCount: actions.length });
     if (actions.length === 0) return null;
 
     const model = await loadModel();
-    if (!model) return null;
+    if (!model) { console.log('selectAiAction: no model loaded'); return null; }
 
     const stateTensor = encodeGameState(latestState);
     const actionFeatures = encodeActions(actions);
     const chosen = selectBestAction(model, stateTensor, actionFeatures, actions);
+    console.log('selectAiAction: model chose', chosen ? getActionKey(chosen) : 'null');
     if (chosen && chosen.type === 'menuButton' && (chosen.arg === 'pass' || chosen.command === 'pass')) {
       const alternatives = actions.filter(a => {
         if (a.type !== 'menuButton') return true;
         return a.arg !== 'pass' && a.command !== 'pass';
       });
       if (alternatives.length > 0) {
-        const claimBtn = alternatives.find(a => a.type === 'menuButton' && ((a.arg && a.arg.toLowerCase().includes('claim')) || (a.command && a.command.toLowerCase().includes('claim'))));
+        const cardClicks = alternatives.filter(a => a.type === 'cardClicked');
+        if (cardClicks.length > 0) return cardClicks[Math.floor(Math.random() * cardClicks.length)];
+        const claimBtn = alternatives.find(a => a.type === 'menuButton' && (String(a.arg ?? '').toLowerCase().includes('claim') || String(a.command ?? '').toLowerCase().includes('claim')));
         if (claimBtn) return claimBtn;
         return alternatives[Math.floor(Math.random() * alternatives.length)];
       }
@@ -273,6 +387,11 @@ async function selectAiAction(recording) {
   }
 }
 
+function getCardName(card) {
+  if (!card) return null;
+  return card.title || card.name || card.card?.title || card.card?.name || card.definition?.title || card.definition?.name || card.displayName || card.label || null;
+}
+
 function findCardInfo(cardId, gameState) {
   if (!gameState || !gameState.players) return null;
   for (const playerId of Object.keys(gameState.players)) {
@@ -282,11 +401,11 @@ function findCardInfo(cardId, gameState) {
       if (Array.isArray(pile)) {
         for (const card of pile) {
           if ((card.uuid || card.id) === cardId) {
-            return { title: card.title || null, pile: pileKey, cost: card.cost, power: card.power };
+            return { title: getCardName(card), pile: pileKey, cost: card.cost, power: card.power, hp: card.hp };
           }
         }
       } else if (pile && (pile.uuid || pile.id) === cardId) {
-        return { title: pile.title || null, pile: pileKey, cost: pile.cost, power: pile.power };
+        return { title: getCardName(pile), pile: pileKey, cost: pile.cost, power: pile.power, hp: pile.hp };
       }
     }
     // Check player-level leader and base
@@ -294,14 +413,14 @@ function findCardInfo(cardId, gameState) {
     if (leader) {
       const leaderId = leader.uuid || leader.id;
       if (leaderId === cardId) {
-        return { title: leader.title || null, pile: 'leader', cost: leader.cost, power: leader.power };
+        return { title: getCardName(leader), pile: 'leader', cost: leader.cost, power: leader.power, hp: leader.hp };
       }
     }
     const base = gameState.players[playerId]?.base;
     if (base) {
       const baseId = base.uuid || base.id;
       if (baseId === cardId) {
-        return { title: base.title || null, pile: 'base', cost: null, power: null };
+        return { title: getCardName(base), pile: 'base', cost: null, power: null, hp: null };
       }
     }
   }
@@ -315,31 +434,52 @@ function describeAction(a, gameState) {
     if (!info) return 'Select card';
 
     const name = info.title || `[${info.pile}]`;
+    const stats = [];
+    if (info.cost != null) stats.push('C:' + info.cost);
+    if (info.power != null) stats.push('P:' + info.power);
+    if (info.hp != null) stats.push('HP:' + info.hp);
+    const suffix = stats.length ? ' (' + stats.join(' ') + ')' : '';
+
     const player = getMyPlayerState(gameState);
     const mode = player?.promptState?.selectCardMode || '';
 
     if (mode !== '' && mode !== 'none') {
-      if (mode.includes('resource')) return `Resource ${name}`;
-      if (mode.includes('target') || mode.includes('attack')) return `Target ${name}`;
-      if (mode.includes('defend')) return `Defend with ${name}`;
-      if (mode.includes('discard')) return `Discard ${name}`;
-      return `Select ${name}`;
+      if (mode.includes('resource')) return `Resource ${name}${suffix}`;
+      if (mode.includes('target') || mode.includes('attack')) return `Target ${name}${suffix}`;
+      if (mode.includes('defend')) return `Defend with ${name}${suffix}`;
+      if (mode.includes('discard')) return `Discard ${name}${suffix}`;
+      return `Select ${name}${suffix}`;
     }
 
-    if (info.pile === 'hand') return `Play ${name}`;
-    if (info.pile === 'groundArena' || info.pile === 'spaceArena') return `Attack with ${name}`;
-    if (info.pile === 'leader') return `Use ${name}`;
-    if (info.pile === 'base') return `Attack ${name}`;
+    if (info.pile === 'hand') return `Play ${name}${suffix}`;
+    if (info.pile === 'groundArena' || info.pile === 'spaceArena') return `Attack with ${name}${suffix}`;
+    if (info.pile === 'leader') return `Use ${name}${suffix}`;
+    if (info.pile === 'base') return `Attack ${name}${suffix}`;
 
-    return `Select ${name}`;
+    return `Select ${name}${suffix}`;
   }
   return a.text || a.arg || a.command || 'Action';
 }
 
 async function sendRecommendations(recording) {
   try {
+    if (!recording) return;
     const latestState = recording.states[recording.states.length - 1]?.state;
     if (!latestState) return;
+    console.log('sendRecommendations called V4', { autoPlay, isAiPlaying, pendingAutoPlay, statesLen: recording.states.length, stateId: latestState.id });
+
+    // Failed action detection: if state hash matches lastSentStateHash, action had no effect
+    if (lastSentActionKey && lastSentStateHash) {
+      const currentHash = getActionSetHash(latestState);
+      if (currentHash === lastSentStateHash) {
+        failedActionKeys.add(lastSentActionKey);
+        console.log('failedActionKeys added', lastSentActionKey);
+      } else {
+        failedActionKeys.clear();
+      }
+      lastSentActionKey = null;
+      lastSentStateHash = null;
+    }
 
     const actions = getAvailableActions(latestState);
     if (actions.length === 0) {
@@ -349,9 +489,10 @@ async function sendRecommendations(recording) {
           const p = latestState.players[pid];
           const ps = p?.promptState;
           if (ps?.buttons?.length > 0) {
-            for (const btn of ps.buttons) {
-              const btnText = btn.text || btn.label || btn.name || btn.title || btn.description || btn.value || btn.content || btn.arg || btn.command || 'Action';
-              actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? '', uuid: ps.promptUuid || '', command: btn.command || '', text: btnText });
+            for (let bi = 0; bi < ps.buttons.length; bi++) {
+              const btn = ps.buttons[bi];
+              const btnText = btn.text || btn.label || btn.name || btn.title || btn.description || btn.value || btn.content || btn.arg || btn.command || `Option ${bi + 1}`;
+              actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? '', uuid: btn.uuid ?? ps.promptUuid ?? '', command: btn.command || '', text: btnText });
             }
             break;
           }
@@ -363,9 +504,10 @@ async function sendRecommendations(recording) {
         // Check common array field names for buttons/choices
         for (const key of ['buttons', 'options', 'choices', 'actions', 'menuItems', 'selections', 'prompts', 'triggers', 'items', 'entries']) {
           if (Array.isArray(ed[key]) && ed[key].length > 0) {
-            for (const entry of ed[key]) {
-              const btnText = entry.text || entry.label || entry.name || entry.title || entry.description || entry.arg || entry.action || entry.value || key;
-              actions.push({ type: 'menuButton', arg: entry.arg || entry.action || entry.value || entry.id || key, text: btnText });
+            for (let ei = 0; ei < ed[key].length; ei++) {
+              const entry = ed[key][ei];
+              const btnText = entry.text || entry.label || entry.name || entry.title || entry.description || entry.arg || entry.action || entry.value || entry.command || `Option ${ei + 1}`;
+              actions.push({ type: 'menuButton', arg: entry.arg ?? entry.action ?? entry.value ?? entry.id ?? key, uuid: entry.uuid ?? '', command: entry.command || '', text: btnText });
             }
             if (actions.length > 0) break;
           }
@@ -376,7 +518,7 @@ async function sendRecommendations(recording) {
             if (ed[key] && typeof ed[key] === 'object' && !Array.isArray(ed[key])) {
               for (const [optKey, optVal] of Object.entries(ed[key])) {
                 const label = typeof optVal === 'string' ? optVal : (optVal.text || optVal.label || optVal.name || optVal.title || optKey);
-                actions.push({ type: 'menuButton', arg: optVal.arg || optVal.action || optVal.value || optKey, text: label });
+                actions.push({ type: 'menuButton', arg: optVal.arg ?? optVal.action ?? optVal.value ?? optKey, uuid: optVal.uuid ?? '', command: optVal.command || '', text: label });
               }
               if (actions.length > 0) break;
             }
@@ -399,30 +541,31 @@ async function sendRecommendations(recording) {
     }
 
     // Auto-confirm resourcing
-    const player = getMyPlayerState(latestState);
-    if (player) {
-      const prompt = player.promptState || {};
-      if (prompt.selectCardMode && prompt.selectCardMode !== 'none') {
-        const hand = player.cardPiles?.hand || [];
-        const selected = hand.filter(c => c.selected);
-        if (selected.length > 0) {
-          const used = (player?.cardPiles?.resources || []).length;
-          const remaining = hand.filter(c => c.selectable && !c.selected);
-          const needsTwo = used === 0;
-          if ((needsTwo && selected.length >= 2) || (!needsTwo && selected.length >= 1) || remaining.length === 0) {
-            const confirmBtn = actions.find(a => a.type === 'menuButton');
-            if (confirmBtn) {
-              await sendActionToTab(confirmBtn);
-              return;
-            }
+    const recPlayer = getMyPlayerState(latestState);
+    const isResource = isResourcePhase(recPlayer, actions);
+    console.log('auto-confirm check', { hasPlayer: !!recPlayer, isResourcePhase: isResource, actionsCount: actions.length, selectableHand: recPlayer ? recPlayer.cardPiles?.hand?.filter(c => c.selectable)?.length : 0, selectedHand: recPlayer ? recPlayer.cardPiles?.hand?.filter(c => c.selected)?.length : 0 });
+    if (recPlayer && isResource) {
+      const hand = recPlayer.cardPiles?.hand || [];
+      const selected = hand.filter(c => c.selected);
+      if (selected.length > 0) {
+        const used = (recPlayer?.cardPiles?.resources || []).length;
+        const remaining = hand.filter(c => c.selectable && !c.selected);
+        const needsTwo = used === 0;
+        console.log('auto-confirm selected check', { selectedLen: selected.length, used, remainingLen: remaining.length, needsTwo, enough: ((needsTwo && selected.length >= 2) || (!needsTwo && selected.length >= 1) || remaining.length === 0) });
+        if ((needsTwo && selected.length >= 2) || (!needsTwo && selected.length >= 1) || remaining.length === 0) {
+          const confirmBtn = actions.find(a => a.type === 'menuButton');
+          if (confirmBtn) {
+            console.log('auto-confirm: confirming resources', confirmBtn);
+            await sendActionToTab(confirmBtn);
+            return;
           }
         }
       }
     }
 
     // Auto-select if exactly one card-click action during selection mode
-    if (player) {
-      const prompt = player.promptState || {};
+    if (recPlayer) {
+      const prompt = recPlayer.promptState || {};
       if (prompt.selectCardMode && prompt.selectCardMode !== 'none') {
         const cardActions = actions.filter(a => a.type === 'cardClicked');
         if (cardActions.length === 1) {
@@ -432,15 +575,39 @@ async function sendRecommendations(recording) {
       }
     }
 
+    // Auto-play: auto-execute the best action without overlay
+    if (autoPlay) {
+      if (pendingAutoPlay) { console.log('autoPlay: pendingAutoPlay locked, skipping'); return; }
+      console.log('autoPlay: starting auto-play cycle');
+      pendingAutoPlay = true;
+      try {
+        const autoAction = await selectAiAction(recording);
+        console.log('autoPlay: selectAiAction returned', autoAction ? getActionKey(autoAction) : 'null');
+        if (autoAction) {
+          const delay = minWait + Math.random() * (maxWait - minWait);
+          const desc = describeAction(autoAction, latestState);
+          lastSentActionKey = getActionKey(autoAction);
+          lastSentStateHash = getActionSetHash(latestState);
+          if (lastTabId) {
+            chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_COUNTDOWN', description: desc, totalMs: Math.round(delay) }).catch(() => {});
+          }
+          await new Promise(r => setTimeout(r, delay));
+          await sendActionToTab(autoAction);
+        }
+      } finally {
+        pendingAutoPlay = false;
+      }
+      return;
+    }
+
     // Mulligan/keep: show both options as recommendations
     const keepBtn = actions.find(a => matchesMulliganAction(a, 'keep'));
     const mulliganBtn = actions.find(a => matchesMulliganAction(a, 'mulligan'));
     if (keepBtn && mulliganBtn) {
       pendingRecommendations = [keepBtn, mulliganBtn];
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'SHOW_RECOMMENDATIONS', recommendations: [
-        { description: describeAction(keepBtn, latestState), score: 0.55 },
-        { description: describeAction(mulliganBtn, latestState), score: 0.45 }
+      if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: [
+        { description: describeAction(keepBtn, latestState), score: 0.55, action: keepBtn },
+        { description: describeAction(mulliganBtn, latestState), score: 0.45, action: mulliganBtn }
       ] }).catch(() => {});
       return;
     }
@@ -461,23 +628,20 @@ async function sendRecommendations(recording) {
             const altTop = selectTopActions(model, stateTensor, af, nonPass, 5);
             if (altTop.length > 0) {
               pendingRecommendations = altTop.map(t => t.action);
-              const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-              if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'SHOW_RECOMMENDATIONS', recommendations: altTop.map(t => ({ description: describeAction(t.action, latestState), score: t.score })) }).catch(() => {});
+              if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: altTop.map(t => ({ description: describeAction(t.action, latestState), score: t.score, action: t.action })) }).catch(() => {});
               return;
             }
           }
         }
         pendingRecommendations = top.map(t => t.action);
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'SHOW_RECOMMENDATIONS', recommendations: top.map(t => ({ description: describeAction(t.action, latestState), score: t.score })) }).catch(() => {});
+        if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: top.map(t => ({ description: describeAction(t.action, latestState), score: t.score, action: t.action })) }).catch(() => {});
         return;
       }
     }
 
     // Fallback: show available actions without model scoring
     pendingRecommendations = actions.slice(0, 5);
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'SHOW_RECOMMENDATIONS', recommendations: actions.slice(0, 5).map(a => ({ description: describeAction(a, latestState), score: 0.5 })) }).catch(() => {});
+    if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: actions.slice(0, 5).map(a => ({ description: describeAction(a, latestState), score: 0.5, action: a })) }).catch(() => {});
   } catch (e) {
     console.error('sendRecommendations failed:', e);
   }
@@ -485,70 +649,137 @@ async function sendRecommendations(recording) {
 
 async function cardToResource(state) {
   const player = getMyPlayerState(state);
-  if (!player) return null;
-  const prompt = player.promptState || {};
-  if (!prompt.selectCardMode || prompt.selectCardMode === 'none') return null;
+  if (!player) { console.log('cardToResource: no player'); return null; }
+  const actions = getAvailableActions(state);
+  const isRes = isResourcePhase(player, actions);
+  console.log('cardToResource: phase check', { isResource: isRes, actionsCount: actions.length });
+  if (!isRes) return null;
 
   const used = (player?.cardPiles?.resources || []).length;
   const leaderCost = player?.leader?.cost ?? player?.cardPiles?.leader?.[0]?.cost ?? 6;
-  if (used >= Math.max(leaderCost, 2)) return null;
+  console.log('cardToResource: resources', { used, leaderCost, maxNeeded: Math.max(leaderCost, 2) });
+  if (used >= Math.max(leaderCost, 2)) { console.log('cardToResource: enough resources'); return null; }
 
   const hand = player?.cardPiles?.hand || [];
   const selectable = hand.filter(c => c.selectable);
   const selected = hand.filter(c => c.selected);
+  console.log('cardToResource: hand', { handLen: hand.length, selectableLen: selectable.length, selectedLen: selected.length });
 
-  if (selectable.length === 0 && selected.length > 0) {
-    const actions = getAvailableActions(state);
+  const needsTwo = used === 0;
+  const enoughSelected = (needsTwo && selected.length >= 2) || (!needsTwo && selected.length >= 1);
+
+  // All selectable done or enough selected → confirm
+  if ((selectable.length === 0 && selected.length > 0) || enoughSelected) {
     const btn = actions.find(a => a.type === 'menuButton');
-    if (btn) return btn;
+    if (btn) { console.log('cardToResource: confirming', { btn: btn.arg }); return btn; }
     return null;
   }
 
+  // Some selected but not enough yet → keep selecting
   if (selected.length > 0) {
-    const actions = getAvailableActions(state);
-    const anyBtn = actions.find(a => a.type === 'menuButton');
-    if (anyBtn || selectable.length === 0) return anyBtn;
+    console.log('cardToResource: selected but not enough', { selectedLen: selected.length, needsTwo });
+    // fall through to select another card below
   }
 
   if (selectable.length > 0) {
     const unselected = selectable.filter(c => !c.selected);
+    console.log('cardToResource: selecting from unselected', { unselectedLen: unselected.length });
     if (unselected.length === 0) {
-      const actions = getAvailableActions(state);
       const btn = actions.find(a => a.type === 'menuButton');
       if (btn) return btn;
       return null;
     }
     const model = await loadModel();
-    const target = unselected;
-    const cardActions = target.map(c => ({ type: 'cardClicked', cardId: c.uuid || c.id }));
+    const cardActions = unselected.map(c => ({ type: 'cardClicked', cardId: c.uuid || c.id }));
     if (model && cardActions.length > 1) {
       const stateTensor = encodeGameState(state);
       const actionFeatures = encodeActions(cardActions);
-      return selectBestAction(model, stateTensor, actionFeatures, cardActions);
+      const best = selectBestAction(model, stateTensor, actionFeatures, cardActions);
+      if (best) { console.log('cardToResource: NN chose', best.cardId); return best; }
     }
+    console.log('cardToResource: picking first card', cardActions[0]?.cardId);
     return cardActions[0];
   }
 
+  console.log('cardToResource: nothing to do');
   return null;
 }
 
 function matchesMulliganAction(a, keyword) {
-  return (a.arg && a.arg.toLowerCase().includes(keyword)) ||
-         (a.command && a.command.toLowerCase().includes(keyword)) ||
-         (a.text && a.text.toLowerCase().includes(keyword));
+  return String(a.arg ?? '').toLowerCase().includes(keyword) ||
+         String(a.command ?? '').toLowerCase().includes(keyword) ||
+         String(a.text ?? '').toLowerCase().includes(keyword);
 }
 
-function trySequences(state) {
+async function trySequences(state) {
   const actions = getAvailableActions(state);
   if (actions.length === 0) return null;
 
-  const keepBtn = actions.find(a => matchesMulliganAction(a, 'keep'));
-  const mulliganBtn = actions.find(a => matchesMulliganAction(a, 'mulligan'));
-  if (keepBtn && mulliganBtn) {
-    const player = getMyPlayerState(state);
-    const hand = player?.cardPiles?.hand || [];
-    const costs = hand.map(c => c.cost).filter(c => c != null);
-    return costs.includes(2) && costs.includes(3) ? keepBtn : mulliganBtn;
+  // Always allow opponent undo/takeback requests
+  const allowBtn = actions.find(a => matchesMulliganAction(a, 'allow') || matchesMulliganAction(a, 'approve'));
+  const denyBtn = actions.find(a => matchesMulliganAction(a, 'deny') || matchesMulliganAction(a, 'reject'));
+  if (allowBtn && denyBtn) {
+    console.log('undo: allowing opponent undo', { arg: allowBtn.arg, text: allowBtn.text });
+    return allowBtn;
+  }
+
+  // Distribute damage / assign indirect damage — use NN to pick targets
+  const player = getMyPlayerState(state);
+  if (player?.promptState?.promptType === 'distributeAmongTargets') {
+    const cardActions = actions.filter(a => a.type === 'cardClicked');
+    const doneBtn = actions.find(a => matchesMulliganAction(a, 'done') || matchesMulliganAction(a, 'confirm'));
+    if (cardActions.length > 0) {
+      const model = await loadModel();
+      if (model && cardActions.length > 1) {
+        const stateTensor = encodeGameState(state);
+        const actionFeatures = encodeActions(cardActions);
+        const chosen = selectBestAction(model, stateTensor, actionFeatures, cardActions);
+        if (chosen) { console.log('distribute: NN chose target', { cardId: chosen.cardId }); return chosen; }
+      }
+      const pick = cardActions[Math.floor(Math.random() * cardActions.length)];
+      console.log('distribute: random target', { cardId: pick.cardId });
+      return pick;
+    }
+    if (doneBtn) {
+      console.log('distribute: confirming damage assignment');
+      return doneBtn;
+    }
+  }
+
+  // Disclose prompts: click cards until requirement is met, then confirm
+  const chooseNothingBtn = actions.find(a => matchesMulliganAction(a, 'choosenothing') || matchesMulliganAction(a, 'choose nothing'));
+  const cancelBtn = actions.find(a => matchesMulliganAction(a, 'cancel'));
+  if (chooseNothingBtn || cancelBtn) {
+    const selectableCards = actions.filter(a => a.type === 'cardClicked');
+    if (selectableCards.length > 0) {
+      const pick = selectableCards[Math.floor(Math.random() * selectableCards.length)];
+      console.log('disclose: selecting card to meet aspect requirement', { cardId: pick.cardId });
+      return pick;
+    }
+    if (chooseNothingBtn) {
+      console.log('disclose: no more cards to select, clicking choose nothing');
+      return chooseNothingBtn;
+    }
+  }
+
+  // Mulligan handled by model (hand card IDs are encoded in game state)
+
+  // Initiative: always pick "Take Initiative" (go first)
+  if (state?.players) {
+    const playerIds = Object.keys(state.players);
+    const activeId = playerIds.find(id => {
+      const ps = state.players[id]?.promptState;
+      return ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false;
+    });
+    if (activeId) {
+      const player = state.players[activeId];
+      if (player?.promptState?.promptType === 'initiative') {
+        const menuBtns = actions.filter(a => a.type === 'menuButton');
+        const goFirst = menuBtns.find(a => matchesMulliganAction(a, 'take') || matchesMulliganAction(a, 'claim') || String(a.arg ?? '') === 'claimInitiative');
+        if (goFirst) { console.log('initiative: going first', { arg: goFirst.arg, text: goFirst.text }); return goFirst; }
+        if (menuBtns.length > 0) { console.log('initiative: picking first button', { arg: menuBtns[0].arg }); return menuBtns[0]; }
+      }
+    }
   }
 
   return null;
@@ -562,9 +793,10 @@ function getAvailableActions(gameState) {
       const player = gameState.players[playerId];
       const prompt = player?.promptState;
       if (prompt && prompt.buttons && prompt.buttons.length > 0) {
-        for (const btn of prompt.buttons) {
-          const btnText = btn.text || btn.label || btn.name || btn.title || btn.description || btn.value || btn.content || btn.arg || btn.command || 'Action';
-          actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? '', uuid: prompt.promptUuid || '', command: btn.command || '', text: btnText });
+        for (let bi = 0; bi < prompt.buttons.length; bi++) {
+          const btn = prompt.buttons[bi];
+          const btnText = btn.text || btn.label || btn.name || btn.title || btn.description || btn.value || btn.content || btn.arg || btn.command || `Option ${bi + 1}`;
+          actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? '', uuid: btn.uuid ?? prompt.promptUuid ?? '', command: btn.command || '', text: btnText });
         }
         break;
       }
@@ -577,15 +809,61 @@ function getAvailableActions(gameState) {
 }
 
 function getMyPlayerState(gameState) {
-  if (!gameState || !gameState.players) return null;
+  if (!gameState || !gameState.players) { console.log('getMyPlayerState: no gameState/players'); return null; }
   const playerIds = Object.keys(gameState.players);
   for (const id of playerIds) {
     const ps = gameState.players[id].promptState;
     if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
+      console.log('getMyPlayerState: found via promptType', id, ps.promptType);
       return gameState.players[id];
     }
   }
+  for (const id of playerIds) {
+    const ps = gameState.players[id].promptState;
+    if (ps && ps.selectCardMode && ps.selectCardMode !== 'none') {
+      console.log('getMyPlayerState: found via selectCardMode', id, ps.selectCardMode);
+      return gameState.players[id];
+    }
+  }
+  for (const id of playerIds) {
+    const ps = gameState.players[id].promptState;
+    if (ps && ps.buttons && ps.buttons.length > 0) {
+      console.log('getMyPlayerState: found via buttons', id, 'buttonCount:', ps.buttons.length);
+      return gameState.players[id];
+    }
+  }
+  console.log('getMyPlayerState: no player found, playerIds:', playerIds, 'states:', playerIds.map(id => ({ id, promptState: gameState.players[id]?.promptState ? Object.keys(gameState.players[id].promptState) : 'no prompt' })));
   return null;
+}
+
+function isResourcePhase(player, actions) {
+  if (!player) { console.log('isResourcePhase: no player'); return false; }
+  const prompt = player.promptState || {};
+  if (prompt.promptType === 'resource') {
+    console.log('isResourcePhase: via promptType', { result: true });
+    return true;
+  }
+  if (prompt.selectCardMode && prompt.selectCardMode !== 'none') {
+    if (prompt.selectCardMode.includes('resource')) {
+      console.log('isResourcePhase: via selectCardMode', { selectCardMode: prompt.selectCardMode, result: true });
+      return true;
+    }
+    // Non-resource select modes (disclose, target, etc.) are not resource phase
+    console.log('isResourcePhase: non-resource selectCardMode', { selectCardMode: prompt.selectCardMode, result: false });
+    return false;
+  }
+  const hand = player.cardPiles?.hand || [];
+  const hasSelectableHand = hand.some(c => c.selectable);
+  const btnTexts = actions.filter(a => a.type === 'menuButton').map(a => ({ text: a.text, arg: a.arg }));
+  const hasResourceBtn = actions.some(a =>
+    a.type === 'menuButton' && (
+      a.arg === 'done' ||
+      (a.text && String(a.text).toLowerCase().includes('resource')) ||
+      (String(a.arg ?? '').toLowerCase().includes('resource'))
+    )
+  );
+  console.log('isResourcePhase: fallback', { hasSelectableHand, hasResourceBtn, handLen: hand.length, selectableInHand: hand.filter(c => c.selectable).length, btnTexts, selectCardMode: prompt.selectCardMode });
+  return hasSelectableHand && hasResourceBtn;
 }
 
 function getSelectableCardIds(gameState) {
@@ -651,17 +929,26 @@ async function startTraining() {
         const stateTensor = encodeGameState(stateObj);
         const actionTensors = encodeActions(allActions);
 
+        const winners = Array.isArray(game.winner) ? game.winner : (game.winner ? [game.winner] : null);
+        const botWon = winners && game.playerId ? winners.includes(game.playerId) : null;
+
         for (let j = 0; j < allActions.length; j++) {
           const wasTaken = takenActions.some(ta => {
-            if (ta.args[0] === 'cardClicked' && allActions[j].type === 'cardClicked')
-              return ta.args[1] === allActions[j].cardId;
-            if (ta.args[0] === 'menuButton' && allActions[j].type === 'menuButton')
-              return ta.args[1] === allActions[j].arg;
+            // Human format: event='menuButton'|'cardClicked', args=[arg, uuid?]
+            // AI format: event='game', args=['menuButton'|'cardClicked', arg, ...]
+            const taType = ta.event === 'game' ? ta.args[0] : ta.event;
+            const taArg = ta.event === 'game' ? ta.args[1] : ta.args[0];
+            if (taType === 'menuButton' && allActions[j].type === 'menuButton')
+              return String(taArg) === String(allActions[j].arg);
+            if (taType === 'cardClicked' && allActions[j].type === 'cardClicked')
+              return String(taArg) === String(allActions[j].cardId);
             return false;
           });
+          // Negative reinforcement: in losses, skip non-taken (only punish mistakes)
+          if (botWon === false && !wasTaken) continue;
           stateBuffer.push(Array.from(stateTensor));
           actionBuffer.push(Array.from(actionTensors[j]));
-          labelBuffer.push(wasTaken ? 1.0 : 0.0);
+          labelBuffer.push(wasTaken ? (botWon === false ? 0.0 : 1.0) : 0.0);
         }
       }
     }
@@ -685,6 +972,72 @@ async function startTraining() {
     console.log(`Trained: ${stateBuffer.length} examples from ${recordings.length} games, acc=${finalAcc.toFixed(4)}`);
   } catch (e) {
     console.error('Training failed:', e);
+  }
+}
+
+async function trainOnGame(recording) {
+  try {
+    const model = await loadModel();
+    if (!model) { console.log('trainOnGame: no model loaded'); return; }
+
+    const stateBuffer = [];
+    const actionBuffer = [];
+    const labelBuffer = [];
+
+    for (let i = 0; i < recording.states.length - 1; i++) {
+      const stateObj = recording.states[i]?.state;
+      if (!stateObj || !stateObj.players) continue;
+      const takenActions = recording.actions.filter((a) => a.stateIndex === i);
+      if (takenActions.length === 0) continue;
+
+      const allActions = getAvailableActions(stateObj);
+      if (allActions.length === 0) continue;
+
+      const stateTensor = encodeGameState(stateObj);
+      const actionTensors = encodeActions(allActions);
+
+      const winners = Array.isArray(recording.winner) ? recording.winner : (recording.winner ? [recording.winner] : null);
+      const botWon = winners && recording.playerId ? winners.includes(recording.playerId) : null;
+
+      for (let j = 0; j < allActions.length; j++) {
+        const wasTaken = takenActions.some(ta => {
+          const taType = ta.event === 'game' ? ta.args[0] : ta.event;
+          const taArg = ta.event === 'game' ? ta.args[1] : ta.args[0];
+          if (taType === 'menuButton' && allActions[j].type === 'menuButton')
+            return String(taArg) === String(allActions[j].arg);
+          if (taType === 'cardClicked' && allActions[j].type === 'cardClicked')
+            return String(taArg) === String(allActions[j].cardId);
+          return false;
+        });
+        // Negative reinforcement: in losses, skip non-taken (only punish mistakes)
+        if (botWon === false && !wasTaken) continue;
+        stateBuffer.push(Array.from(stateTensor));
+        actionBuffer.push(Array.from(actionTensors[j]));
+        labelBuffer.push(wasTaken ? (botWon === false ? 0.0 : 1.0) : 0.0);
+      }
+    }
+
+    if (stateBuffer.length === 0) { console.log('trainOnGame: no training examples'); return; }
+
+    const history = await trainModel(model, stateBuffer, actionBuffer, labelBuffer, 1);
+    await saveModelToDB(model);
+
+    const finalLoss = history.history.loss[history.history.loss.length - 1];
+    const finalAcc = history.history.acc[history.history.acc.length - 1];
+    const stats = await getTrainingStats();
+    await updateTrainingStats({
+      gamesTrained: (stats?.gamesTrained || 0) + 1,
+      lastTrainedAt: Date.now(),
+      loss: finalLoss,
+      accuracy: finalAcc,
+      examples: (stats?.examples || 0) + stateBuffer.length
+    });
+
+    recording.trained = true;
+    await saveGameRecording(recording);
+    console.log(`trainOnGame: ${stateBuffer.length} examples from 1 game, acc=${finalAcc.toFixed(4)}`);
+  } catch (e) {
+    console.error('trainOnGame failed:', e);
   }
 }
 

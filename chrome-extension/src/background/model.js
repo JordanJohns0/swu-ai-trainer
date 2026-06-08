@@ -1,5 +1,5 @@
 const MAX_CARDS_IN_ZONE = 5;
-const NUM_SCALAR_FEATURES = 40;
+const NUM_SCALAR_FEATURES = 45;
 const SELECT_CARD_MODES = ['resource', 'target', 'defend', 'discard', 'play', 'attack', 'select'];
 const CARD_FEATURE_COUNT = 10 * MAX_CARDS_IN_ZONE * 7;
 const STATE_SIZE = NUM_SCALAR_FEATURES + CARD_FEATURE_COUNT;
@@ -36,6 +36,10 @@ function findActivePlayerId(gameState) {
   return Object.keys(players)[0];
 }
 
+function totalPower(cards) {
+  return (cards || []).reduce((sum, c) => sum + (c.power || 0), 0);
+}
+
 function encodeScalarFeatures(gameState, me, opp, mine, theirs) {
   const f = [];
   f.push(normalize(gameState.roundNumber || 0, 20));
@@ -60,6 +64,20 @@ function encodeScalarFeatures(gameState, me, opp, mine, theirs) {
   f.push(normalize((theirs.spaceArena || []).length, 10));
   f.push(+(gameState.initiativeClaimed || false));
   f.push(+(me.isActionPhaseActivePlayer || false));
+
+  // Arena power totals
+  f.push(normalize(totalPower(mine.groundArena), 20));
+  f.push(normalize(totalPower(theirs.groundArena), 20));
+  f.push(normalize(totalPower(mine.spaceArena), 20));
+  f.push(normalize(totalPower(theirs.spaceArena), 20));
+
+  // Selectable cards and play info
+  const hand = mine.hand || [];
+  f.push(normalize(hand.filter(c => c.selectable).length, 10));
+  const totalRes = getResourceCount(mine);
+  f.push(normalize(totalRes > 0 ? (me.availableResources || 0) / totalRes : 1, 1));
+  f.push(normalize((mine.groundArena || []).length + (mine.spaceArena || []).length, 10));
+  f.push(normalize((theirs.groundArena || []).length + (theirs.spaceArena || []).length, 10));
 
   const mode = (me?.promptState?.selectCardMode || 'none').toLowerCase();
   let found = false;
@@ -305,12 +323,19 @@ function selectBestAction(model, stateTensor, actionFeatures, actionDescriptors)
   if (actionDescriptors.length === 0) return null;
   if (actionDescriptors.length === 1) return actionDescriptors[0];
   const scores = actionFeatures.map((af) => model.forward(stateTensor, af));
-  return actionDescriptors[scores.indexOf(Math.max(...scores))];
+  const bestScore = Math.max(...scores);
+  const worstScore = Math.min(...scores);
+  if (isNaN(bestScore) || !isFinite(bestScore) || bestScore - worstScore < 0.01) {
+    return actionDescriptors[Math.floor(Math.random() * actionDescriptors.length)];
+  }
+  return actionDescriptors[scores.indexOf(bestScore)];
 }
 
 function selectTopActions(model, stateTensor, actionFeatures, actionDescriptors, n) {
   n = n || 3;
-  const scored = actionFeatures.map((af, i) => ({ score: model.forward(stateTensor, af), action: actionDescriptors[i] }));
+  const scored = actionFeatures.map((af, i) => ({ score: model.forward(stateTensor, af), action: actionDescriptors[i] }))
+    .filter(s => isFinite(s.score));
+  if (scored.length === 0) return (actionDescriptors || []).slice(0, n).map(a => ({ score: 0.5, action: a }));
   scored.sort((a, b) => b.score - a.score);
   const top = scored.slice(0, Math.min(n, scored.length));
 
