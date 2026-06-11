@@ -356,7 +356,16 @@ async function selectAiAction(recording) {
     const resourceAction = await cardToResource(latestState);
     if (resourceAction) { console.log('selectAiAction: cardToResource returned', getActionKey(resourceAction)); return resourceAction; }
 
-    const actions = getAvailableActions(latestState);
+    let allActions = getAvailableActions(latestState);
+    let actions = allActions.filter(a => !failedActionKeys.has(getActionKey(a)));
+    if (actions.length !== allActions.length) {
+      console.log('selectAiAction: filtered failed actions', { total: allActions.length, afterFilter: actions.length });
+    }
+    if (actions.length === 0 && allActions.length > 0) {
+      console.log('selectAiAction: all actions were in failedActionKeys, clearing set and retrying');
+      failedActionKeys.clear();
+      actions = allActions;
+    }
     console.log('selectAiAction: no sequence or resource action, falling through to model', { actionsCount: actions.length });
     if (actions.length === 0) return null;
 
@@ -366,7 +375,7 @@ async function selectAiAction(recording) {
     const stateTensor = encodeGameState(latestState);
     const actionFeatures = encodeActions(actions);
     const chosen = selectBestAction(model, stateTensor, actionFeatures, actions);
-    console.log('selectAiAction: model chose', chosen ? getActionKey(chosen) : 'null');
+    console.log('selectAiAction: model chose', getActionKey(chosen), chosen ? describeAction(chosen, latestState) : '');
     if (chosen && chosen.type === 'menuButton' && (chosen.arg === 'pass' || chosen.command === 'pass')) {
       const alternatives = actions.filter(a => {
         if (a.type !== 'menuButton') return true;
@@ -481,7 +490,16 @@ async function sendRecommendations(recording) {
       lastSentStateHash = null;
     }
 
-    const actions = getAvailableActions(latestState);
+    const allActions = getAvailableActions(latestState);
+    let actions = allActions.filter(a => !failedActionKeys.has(getActionKey(a)));
+    if (actions.length !== allActions.length) {
+      console.log('sendRecommendations: filtered failed actions', { total: allActions.length, afterFilter: actions.length });
+    }
+    if (actions.length === 0 && allActions.length > 0) {
+      console.log('sendRecommendations: all actions were in failedActionKeys, clearing set and retrying');
+      failedActionKeys.clear();
+      actions = allActions;
+    }
     if (actions.length === 0) {
       // Try extracting buttons directly from any player's promptState
       if (latestState?.players) {
@@ -584,14 +602,20 @@ async function sendRecommendations(recording) {
         const autoAction = await selectAiAction(recording);
         console.log('autoPlay: selectAiAction returned', autoAction ? getActionKey(autoAction) : 'null');
         if (autoAction) {
-          const delay = minWait + Math.random() * (maxWait - minWait);
+          let delay = minWait + Math.random() * (maxWait - minWait);
+          if (actions.length <= 2) {
+            delay /= 2;
+          }
+          delay = Math.max(delay, 1000);
           const desc = describeAction(autoAction, latestState);
-          lastSentActionKey = getActionKey(autoAction);
-          lastSentStateHash = getActionSetHash(latestState);
           if (lastTabId) {
             chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_COUNTDOWN', description: desc, totalMs: Math.round(delay) }).catch(() => {});
           }
           await new Promise(r => setTimeout(r, delay));
+          // Capture state hash right before send, after delay, to avoid false-positive
+          // failure detection from GAMESTATE events arriving during the wait.
+          lastSentStateHash = getActionSetHash(latestState);
+          lastSentActionKey = getActionKey(autoAction);
           await sendActionToTab(autoAction);
         }
       } finally {
@@ -650,7 +674,7 @@ async function sendRecommendations(recording) {
 async function cardToResource(state) {
   const player = getMyPlayerState(state);
   if (!player) { console.log('cardToResource: no player'); return null; }
-  const actions = getAvailableActions(state);
+  const actions = getAvailableActions(state).filter(a => !failedActionKeys.has(getActionKey(a)));
   const isRes = isResourcePhase(player, actions);
   console.log('cardToResource: phase check', { isResource: isRes, actionsCount: actions.length });
   if (!isRes) return null;
@@ -712,7 +736,7 @@ function matchesMulliganAction(a, keyword) {
 }
 
 async function trySequences(state) {
-  const actions = getAvailableActions(state);
+  const actions = getAvailableActions(state).filter(a => !failedActionKeys.has(getActionKey(a)));
   if (actions.length === 0) return null;
 
   // Always allow opponent undo/takeback requests
@@ -764,7 +788,7 @@ async function trySequences(state) {
 
   // Mulligan handled by model (hand card IDs are encoded in game state)
 
-  // Initiative: always pick "Take Initiative" (go first)
+  // Initiative
   if (state?.players) {
     const playerIds = Object.keys(state.players);
     const activeId = playerIds.find(id => {
@@ -775,6 +799,19 @@ async function trySequences(state) {
       const player = state.players[activeId];
       if (player?.promptState?.promptType === 'initiative') {
         const menuBtns = actions.filter(a => a.type === 'menuButton');
+
+        // Dedra Meero + Colossus: always pass initiative
+        const botId = currentGameRecording?.playerId;
+        if (botId && state.players[botId]) {
+          const leaderName = getCardName(state.players[botId].leader);
+          const baseName = getCardName(state.players[botId].base);
+          if (leaderName && leaderName.includes('Dedra Meero') && baseName && baseName.includes('Colossus')) {
+            const goSecond = menuBtns.find(a => matchesMulliganAction(a, 'pass') || String(a.arg ?? '').includes('pass'));
+            if (goSecond) { console.log('initiative: Dedra+Colossus, giving opponent first', { arg: goSecond.arg, text: goSecond.text }); return goSecond; }
+          }
+        }
+
+        // Default: always pick "Take Initiative" (go first)
         const goFirst = menuBtns.find(a => matchesMulliganAction(a, 'take') || matchesMulliganAction(a, 'claim') || String(a.arg ?? '') === 'claimInitiative');
         if (goFirst) { console.log('initiative: going first', { arg: goFirst.arg, text: goFirst.text }); return goFirst; }
         if (menuBtns.length > 0) { console.log('initiative: picking first button', { arg: menuBtns[0].arg }); return menuBtns[0]; }
@@ -900,7 +937,6 @@ function getSelectableCardIds(gameState) {
 
 async function startTraining() {
   try {
-    // Reset old model and training flags to retrain from scratch with corrected labels
     await saveModelWeights(null);
     clearCachedModel();
     await markAllGamesUntrained();
@@ -912,64 +948,20 @@ async function startTraining() {
     const model = await loadModel();
     if (!model) return;
 
-    const stateBuffer = [];
-    const actionBuffer = [];
-    const labelBuffer = [];
-
-    for (const game of recordings) {
-      for (let i = 0; i < game.states.length - 1; i++) {
-        const stateObj = game.states[i]?.state;
-        if (!stateObj || !stateObj.players) continue;
-        const takenActions = game.actions.filter((a) => a.stateIndex === i);
-        if (takenActions.length === 0) continue;
-
-        const allActions = getAvailableActions(stateObj);
-        if (allActions.length === 0) continue;
-
-        const stateTensor = encodeGameState(stateObj);
-        const actionTensors = encodeActions(allActions);
-
-        const winners = Array.isArray(game.winner) ? game.winner : (game.winner ? [game.winner] : null);
-        const botWon = winners && game.playerId ? winners.includes(game.playerId) : null;
-
-        for (let j = 0; j < allActions.length; j++) {
-          const wasTaken = takenActions.some(ta => {
-            // Human format: event='menuButton'|'cardClicked', args=[arg, uuid?]
-            // AI format: event='game', args=['menuButton'|'cardClicked', arg, ...]
-            const taType = ta.event === 'game' ? ta.args[0] : ta.event;
-            const taArg = ta.event === 'game' ? ta.args[1] : ta.args[0];
-            if (taType === 'menuButton' && allActions[j].type === 'menuButton')
-              return String(taArg) === String(allActions[j].arg);
-            if (taType === 'cardClicked' && allActions[j].type === 'cardClicked')
-              return String(taArg) === String(allActions[j].cardId);
-            return false;
-          });
-          // Negative reinforcement: in losses, skip non-taken (only punish mistakes)
-          if (botWon === false && !wasTaken) continue;
-          stateBuffer.push(Array.from(stateTensor));
-          actionBuffer.push(Array.from(actionTensors[j]));
-          labelBuffer.push(wasTaken ? (botWon === false ? 0.0 : 1.0) : 0.0);
-        }
-      }
-    }
-
-    if (stateBuffer.length === 0) { console.log('No training examples'); return; }
-
-    const history = await trainModel(model, stateBuffer, actionBuffer, labelBuffer, 5);
+    console.log(`Training on ${recordings.length} games with ranking loss...`);
+    const history = await trainModelRanking(model, recordings);
     await saveModelToDB(model);
 
-    const finalLoss = history.history.loss[history.history.loss.length - 1];
-    const finalAcc = history.history.acc[history.history.acc.length - 1];
+    const finalPrefAcc = history.history.pref_acc[history.history.pref_acc.length - 1];
     const stats = await getTrainingStats();
     await updateTrainingStats({
       gamesTrained: (stats?.gamesTrained || 0) + recordings.length,
       lastTrainedAt: Date.now(),
-      loss: finalLoss,
-      accuracy: finalAcc,
-      examples: stateBuffer.length
+      accuracy: finalPrefAcc,
+      examples: recordings.reduce((s, g) => s + g.states.length, 0)
     });
     await markGamesTrained(recordings.map((g) => g.gameId));
-    console.log(`Trained: ${stateBuffer.length} examples from ${recordings.length} games, acc=${finalAcc.toFixed(4)}`);
+    console.log(`Trained on ${recordings.length} games, final pref_acc=${(finalPrefAcc * 100).toFixed(2)}%`);
   } catch (e) {
     console.error('Training failed:', e);
   }
@@ -980,62 +972,21 @@ async function trainOnGame(recording) {
     const model = await loadModel();
     if (!model) { console.log('trainOnGame: no model loaded'); return; }
 
-    const stateBuffer = [];
-    const actionBuffer = [];
-    const labelBuffer = [];
-
-    for (let i = 0; i < recording.states.length - 1; i++) {
-      const stateObj = recording.states[i]?.state;
-      if (!stateObj || !stateObj.players) continue;
-      const takenActions = recording.actions.filter((a) => a.stateIndex === i);
-      if (takenActions.length === 0) continue;
-
-      const allActions = getAvailableActions(stateObj);
-      if (allActions.length === 0) continue;
-
-      const stateTensor = encodeGameState(stateObj);
-      const actionTensors = encodeActions(allActions);
-
-      const winners = Array.isArray(recording.winner) ? recording.winner : (recording.winner ? [recording.winner] : null);
-      const botWon = winners && recording.playerId ? winners.includes(recording.playerId) : null;
-
-      for (let j = 0; j < allActions.length; j++) {
-        const wasTaken = takenActions.some(ta => {
-          const taType = ta.event === 'game' ? ta.args[0] : ta.event;
-          const taArg = ta.event === 'game' ? ta.args[1] : ta.args[0];
-          if (taType === 'menuButton' && allActions[j].type === 'menuButton')
-            return String(taArg) === String(allActions[j].arg);
-          if (taType === 'cardClicked' && allActions[j].type === 'cardClicked')
-            return String(taArg) === String(allActions[j].cardId);
-          return false;
-        });
-        // Negative reinforcement: in losses, skip non-taken (only punish mistakes)
-        if (botWon === false && !wasTaken) continue;
-        stateBuffer.push(Array.from(stateTensor));
-        actionBuffer.push(Array.from(actionTensors[j]));
-        labelBuffer.push(wasTaken ? (botWon === false ? 0.0 : 1.0) : 0.0);
-      }
-    }
-
-    if (stateBuffer.length === 0) { console.log('trainOnGame: no training examples'); return; }
-
-    const history = await trainModel(model, stateBuffer, actionBuffer, labelBuffer, 1);
+    const history = await trainModelRanking(model, [recording], { epochs: 3 });
     await saveModelToDB(model);
 
-    const finalLoss = history.history.loss[history.history.loss.length - 1];
-    const finalAcc = history.history.acc[history.history.acc.length - 1];
+    const finalPrefAcc = history.history.pref_acc[history.history.pref_acc.length - 1];
     const stats = await getTrainingStats();
     await updateTrainingStats({
       gamesTrained: (stats?.gamesTrained || 0) + 1,
       lastTrainedAt: Date.now(),
-      loss: finalLoss,
-      accuracy: finalAcc,
-      examples: (stats?.examples || 0) + stateBuffer.length
+      accuracy: finalPrefAcc,
+      examples: (stats?.examples || 0) + recording.states.length
     });
 
     recording.trained = true;
     await saveGameRecording(recording);
-    console.log(`trainOnGame: ${stateBuffer.length} examples from 1 game, acc=${finalAcc.toFixed(4)}`);
+    console.log(`trainOnGame: 1 game, pref_acc=${(finalPrefAcc * 100).toFixed(2)}%`);
   } catch (e) {
     console.error('trainOnGame failed:', e);
   }

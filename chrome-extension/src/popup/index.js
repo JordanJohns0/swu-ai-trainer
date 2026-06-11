@@ -2,6 +2,23 @@ const bg = chrome.runtime;
 
 function $id(id) { return document.getElementById(id); }
 
+const NETWORK_LAYERS = [
+  { label: 'Input', size: 459, detail: 'State 395 + Action 64', cls: 'input-layer', barPct: 100 },
+  { label: 'Dense 1', size: 128, detail: 'ReLU', cls: '', barPct: 28 },
+  { label: 'Dense 2', size: 64, detail: 'ReLU', cls: '', barPct: 14 },
+  { label: 'Output', size: 1, detail: 'Linear (Score)', cls: 'output-layer', barPct: 0.5 },
+];
+
+function renderNetwork() {
+  const el = document.getElementById('network-viz');
+  if (!el) return;
+  const arrowSvg = '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 8h10M8 4l4 4-4 4" stroke="#30363d" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  el.innerHTML = NETWORK_LAYERS.map((l, i) => {
+    const html = `<div class="layer ${l.cls}"><div class="layer-label">${l.label}</div><div class="layer-size">${l.size}</div><div class="layer-detail">${l.detail}</div><div class="size-bar" style="height:${l.barPct}%"></div></div>`;
+    return i > 0 ? `<div class="arrow">${arrowSvg}</div>${html}` : html;
+  }).join('');
+}
+
 function log(msg) {
   const el = $id('log');
   const d = document.createElement('div');
@@ -45,6 +62,7 @@ async function refreshStatus() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  renderNetwork();
   refreshStatus();
   setInterval(refreshStatus, 2000);
 });
@@ -104,6 +122,7 @@ $id('max-wait').addEventListener('input', function() {
 });
 
 $id('btn-train').addEventListener('click', async () => {
+  if (!confirm('Start training on all recorded games? This may take a while and the bot will not play during training.')) return;
   $id('btn-train').disabled = true;
   $id('btn-train').textContent = 'Training...';
   log('Training started...');

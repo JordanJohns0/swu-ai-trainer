@@ -190,7 +190,8 @@ class Layer {
       for (let i = 0; i < this.inSize; i++) {
         sum += input[i] * this.w[o * this.inSize + i];
       }
-      out[o] = this.activation === 'relu' ? Math.max(0, sum) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-sum)) : sum;
+      if (!isFinite(sum)) sum = 0;
+      out[o] = this.activation === 'relu' ? Math.max(0, sum) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(sum, -100), 100))) : sum;
     }
     return out;
   }
@@ -212,7 +213,8 @@ class Layer {
     for (let o = 0; o < this.outSize; o++) {
       z[o] = this.b[o];
       for (let i = 0; i < this.inSize; i++) z[o] += input[i] * this.w[o * this.inSize + i];
-      a[o] = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-z[o])) : z[o];
+      if (!isFinite(z[o])) z[o] = 0;
+      a[o] = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(z[o], -100), 100))) : z[o];
     }
     const dz = new Float64Array(this.outSize);
     for (let o = 0; o < this.outSize; o++) {
@@ -223,22 +225,75 @@ class Layer {
       } else {
         dz[o] = target[o];
       }
+      if (!isFinite(dz[o])) dz[o] = 0;
+      dz[o] = Math.min(Math.max(dz[o], -5), 5);
     }
     const dw = new Float64Array(this.inSize * this.outSize);
     for (let o = 0; o < this.outSize; o++) {
       for (let i = 0; i < this.inSize; i++) {
         dw[o * this.inSize + i] = dz[o] * input[i];
+        if (!isFinite(dw[o * this.inSize + i])) dw[o * this.inSize + i] = 0;
       }
     }
-    for (let i = 0; i < this.w.length; i++) this.w[i] -= lr * dw[i];
-    for (let i = 0; i < this.b.length; i++) this.b[i] -= lr * dz[i];
+    for (let i = 0; i < this.w.length; i++) {
+      this.w[i] -= lr * Math.min(Math.max(dw[i], -10), 10);
+    }
+    for (let i = 0; i < this.b.length; i++) {
+      this.b[i] -= lr * Math.min(Math.max(dz[i], -10), 10);
+    }
     const da_out = new Float64Array(this.inSize);
     for (let i = 0; i < this.inSize; i++) {
       let sum = 0;
       for (let o = 0; o < this.outSize; o++) sum += dz[o] * this.w[o * this.inSize + i];
-      da_out[i] = sum;
+      da_out[i] = isFinite(sum) ? sum : 0;
     }
     return da_out;
+  }
+
+  backward(input, target) {
+    const z = new Float64Array(this.outSize);
+    const a = new Float64Array(this.outSize);
+    for (let o = 0; o < this.outSize; o++) {
+      z[o] = this.b[o];
+      for (let i = 0; i < this.inSize; i++) z[o] += input[i] * this.w[o * this.inSize + i];
+      if (!isFinite(z[o])) z[o] = 0;
+      a[o] = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(z[o], -100), 100))) : z[o];
+    }
+    const dz = new Float64Array(this.outSize);
+    for (let o = 0; o < this.outSize; o++) {
+      if (this.activation === 'sigmoid') {
+        dz[o] = a[o] - target[o];
+      } else if (this.activation === 'relu') {
+        dz[o] = target[o] * (z[o] > 0 ? 1 : 0);
+      } else {
+        dz[o] = target[o];
+      }
+      if (!isFinite(dz[o])) dz[o] = 0;
+      dz[o] = Math.min(Math.max(dz[o], -5), 5);
+    }
+    const dw = new Float64Array(this.inSize * this.outSize);
+    for (let o = 0; o < this.outSize; o++) {
+      for (let i = 0; i < this.inSize; i++) {
+        dw[o * this.inSize + i] = dz[o] * input[i];
+        if (!isFinite(dw[o * this.inSize + i])) dw[o * this.inSize + i] = 0;
+      }
+    }
+    const da_out = new Float64Array(this.inSize);
+    for (let i = 0; i < this.inSize; i++) {
+      let sum = 0;
+      for (let o = 0; o < this.outSize; o++) sum += dz[o] * this.w[o * this.inSize + i];
+      da_out[i] = isFinite(sum) ? sum : 0;
+    }
+    return { dw, dz, da_out };
+  }
+
+  applyGradients(dwAccum, dzAccum, lr) {
+    for (let i = 0; i < this.w.length; i++) {
+      this.w[i] -= lr * Math.min(Math.max(dwAccum[i], -10), 10);
+    }
+    for (let i = 0; i < this.b.length; i++) {
+      this.b[i] -= lr * Math.min(Math.max(dzAccum[i], -10), 10);
+    }
   }
 }
 
@@ -247,7 +302,7 @@ class NeuralNet {
     this.layers = [
       new Layer(STATE_SIZE + ACTION_FEATURE_SIZE, 128, 'relu'),
       new Layer(128, 64, 'relu'),
-      new Layer(64, 1, 'sigmoid')
+      new Layer(64, 1, 'linear')
     ];
   }
 
@@ -278,6 +333,88 @@ class NeuralNet {
         da = this.layers[i].train(layerInput, da, lr);
       }
     }
+  }
+
+  trainRankingStep(state, actionTensors, takenIndex, isWin, lr, margin, topK = 0) {
+    const combineds = actionTensors.map(af => {
+      const c = new Float64Array(STATE_SIZE + ACTION_FEATURE_SIZE);
+      c.set(state, 0);
+      c.set(af, STATE_SIZE);
+      return c;
+    });
+
+    const scores = combineds.map(c => {
+      let x = c;
+      for (const layer of this.layers) x = layer.forward(x);
+      return x[0];
+    });
+
+    const grads = new Float64Array(actionTensors.length);
+    if (topK > 0 && actionTensors.length > 2) {
+      const nonTaken = [];
+      for (let j = 0; j < actionTensors.length; j++) {
+        if (j !== takenIndex) nonTaken.push(j);
+      }
+      nonTaken.sort((a, b) => scores[b] - scores[a]);
+      const candidates = nonTaken.slice(0, Math.min(topK, nonTaken.length));
+      for (const j of candidates) {
+        if (isWin) {
+          if (scores[j] + margin > scores[takenIndex]) {
+            grads[takenIndex] -= 1;
+            grads[j] += 1;
+          }
+        } else {
+          if (scores[takenIndex] + margin > scores[j]) {
+            grads[takenIndex] += 1;
+            grads[j] -= 1;
+          }
+        }
+      }
+    } else {
+      for (let j = 0; j < actionTensors.length; j++) {
+        if (j === takenIndex) continue;
+        if (isWin) {
+          if (scores[j] + margin > scores[takenIndex]) {
+            grads[takenIndex] -= 1;
+            grads[j] += 1;
+          }
+        } else {
+          if (scores[takenIndex] + margin > scores[j]) {
+            grads[takenIndex] += 1;
+            grads[j] -= 1;
+          }
+        }
+      }
+    }
+
+    const accumDws = this.layers.map(l => new Float64Array(l.w.length));
+    const accumDzs = this.layers.map(l => new Float64Array(l.b.length));
+    let anyGrad = false;
+
+    for (let j = 0; j < actionTensors.length; j++) {
+      if (grads[j] === 0) continue;
+      anyGrad = true;
+
+      let da = null;
+      for (let i = this.layers.length - 1; i >= 0; i--) {
+        const layerInput = i === 0 ? combineds[j] : this.layers.slice(0, i).reduce((x, l) => l.forward(x), combineds[j]);
+        const target = da !== null ? da : new Float64Array([grads[j]]);
+        const result = this.layers[i].backward(layerInput, target);
+        for (let k = 0; k < result.dw.length; k++) accumDws[i][k] += result.dw[k];
+        for (let k = 0; k < result.dz.length; k++) accumDzs[i][k] += result.dz[k];
+        da = result.da_out;
+      }
+    }
+
+    if (anyGrad) {
+      for (let i = 0; i < this.layers.length; i++) {
+        this.layers[i].applyGradients(accumDws[i], accumDzs[i], lr);
+      }
+    }
+
+    let violations = 0;
+    for (let j = 0; j < grads.length; j++) violations += Math.abs(grads[j]);
+    return violations;
   }
 
   save() {
@@ -366,41 +503,71 @@ function selectTopActions(model, stateTensor, actionFeatures, actionDescriptors,
   return top;
 }
 
-async function trainModel(model, stateBuffer, actionBuffer, labelBuffer, epochs = 5) {
-  const lr = 0.005;
-  const losses = [];
-  const accs = [];
+async function trainModelRanking(model, games, params = {}) {
+  const {
+    lrStart = 0.003, lrEnd = 0.001,
+    marginWinStart = 2.0, marginWinEnd = 1.0,
+    marginLossStart = 0.6, marginLossEnd = 0.3,
+    epochs = 5, topK = 3
+  } = params;
+  const prefAccs = [];
   for (let epoch = 0; epoch < epochs; epoch++) {
-    const indices = Array.from({ length: stateBuffer.length }, (_, i) => i);
-    for (let i = indices.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [indices[i], indices[j]] = [indices[j], indices[i]]; }
-    let epochLoss = 0;
-    let correct = 0;
-    const valCount = Math.max(1, Math.floor(stateBuffer.length * 0.1));
-    for (let k = 0; k < stateBuffer.length - valCount; k++) {
-      const idx = indices[k];
-      const pred = model.forward(new Float64Array(stateBuffer[idx]), new Float64Array(actionBuffer[idx]));
-      const target = labelBuffer[idx];
-      const loss = -(target * Math.log(Math.max(pred, 1e-10)) + (1 - target) * Math.log(Math.max(1 - pred, 1e-10)));
-      epochLoss += loss;
-      if ((pred >= 0.5 && target >= 0.5) || (pred < 0.5 && target < 0.5)) correct++;
-      model.trainStep(new Float64Array(stateBuffer[idx]), new Float64Array(actionBuffer[idx]), target, lr);
+    const t = epochs > 1 ? epoch / (epochs - 1) : 0;
+    const epochLr = lrStart + (lrEnd - lrStart) * t;
+    const epochMarginWin = marginWinStart + (marginWinEnd - marginWinStart) * t;
+    const epochMarginLoss = marginLossStart + (marginLossEnd - marginLossStart) * t;
+    for (let i = games.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [games[i], games[j]] = [games[j], games[i]];
     }
-    let valLoss = 0;
-    let valCorrect = 0;
-    for (let k = stateBuffer.length - valCount; k < stateBuffer.length; k++) {
-      const idx = indices[k];
-      const pred = model.forward(new Float64Array(stateBuffer[idx]), new Float64Array(actionBuffer[idx]));
-      const target = labelBuffer[idx];
-      valLoss += -(target * Math.log(Math.max(pred, 1e-10)) + (1 - target) * Math.log(Math.max(1 - pred, 1e-10)));
-      if ((pred >= 0.5 && target >= 0.5) || (pred < 0.5 && target < 0.5)) valCorrect++;
+    let totalViolations = 0;
+    let totalStates = 0;
+    let correctPref = 0;
+    let totalPref = 0;
+    for (const game of games) {
+      const winners = Array.isArray(game.winner) ? game.winner : (game.winner ? [game.winner] : null);
+      const botWon = winners && game.playerId ? winners.includes(game.playerId) : null;
+      if (botWon === null) continue;
+      for (let i = 0; i < game.states.length - 1; i++) {
+        const stateObj = game.states[i]?.state;
+        if (!stateObj || !stateObj.players) continue;
+        const takenActions = game.actions.filter(a => a.stateIndex === i);
+        if (takenActions.length === 0) continue;
+        const allActions = getAvailableActions(stateObj);
+        if (allActions.length < 2) continue;
+        const stateTensor = encodeGameState(stateObj);
+        const actionTensors = encodeActions(allActions);
+        let takenIndex = -1;
+        for (let j = 0; j < allActions.length; j++) {
+          if (takenActions.some(ta => {
+            const taType = ta.event === 'game' ? ta.args[0] : ta.event;
+            const taArg = ta.event === 'game' ? ta.args[1] : ta.args[0];
+            if (taType === 'menuButton' && allActions[j].type === 'menuButton')
+              return String(taArg) === String(allActions[j].arg);
+            if (taType === 'cardClicked' && allActions[j].type === 'cardClicked')
+              return String(taArg) === String(allActions[j].cardId);
+            return false;
+          })) { takenIndex = j; break; }
+        }
+        if (takenIndex === -1) continue;
+        const scores = allActions.map((_, j) => model.forward(stateTensor, actionTensors[j]));
+        if (botWon) {
+          const maxOther = Math.max(...scores.filter((_, idx) => idx !== takenIndex));
+          if (scores[takenIndex] >= maxOther) correctPref++;
+        } else {
+          const minOther = Math.min(...scores.filter((_, idx) => idx !== takenIndex));
+          if (scores[takenIndex] <= minOther) correctPref++;
+        }
+        totalPref++;
+        const margin = botWon ? epochMarginWin : epochMarginLoss;
+        totalViolations += model.trainRankingStep(stateTensor, actionTensors, takenIndex, botWon, epochLr, margin, topK);
+        totalStates++;
+      }
     }
-    const trainLoss = epochLoss / (stateBuffer.length - valCount);
-    const trainAcc = correct / (stateBuffer.length - valCount);
-    const vLoss = valLoss / valCount;
-    const vAcc = valCorrect / valCount;
-    console.log(`Epoch ${epoch + 1}: loss=${trainLoss.toFixed(4)}, acc=${trainAcc.toFixed(4)}, val_loss=${vLoss.toFixed(4)}, val_acc=${vAcc.toFixed(4)}`);
-    losses.push(trainLoss);
-    accs.push(trainAcc);
+    const prefAcc = totalPref > 0 ? correctPref / totalPref : 0;
+    const avgViolations = totalStates > 0 ? totalViolations / totalStates : 0;
+    console.log(`Epoch ${epoch + 1}: lr=${epochLr.toFixed(5)} mWin=${epochMarginWin.toFixed(3)} mLoss=${epochMarginLoss.toFixed(3)} topK=${topK} avg_violations=${avgViolations.toFixed(4)} pref_acc=${(prefAcc * 100).toFixed(2)}% (${correctPref}/${totalPref})`);
+    prefAccs.push(prefAcc);
   }
-  return { history: { loss: losses, acc: accs, val_loss: losses, val_acc: accs } };
+  return { history: { pref_acc: prefAccs } };
 }

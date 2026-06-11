@@ -1,0 +1,16 @@
+{
+  "name": "chrome-extension",
+  "version": "1.0.0",
+  "description": "A Chrome extension that hooks into [Karabast.net](https://karabast.net) to record Star Wars: Unlimited games and train a neural network AI that can play the game.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0"
+  }
+}
