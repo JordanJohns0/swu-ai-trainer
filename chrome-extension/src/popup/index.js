@@ -19,6 +19,36 @@ function renderNetwork() {
   }).join('');
 }
 
+function renderPlan(plan) {
+  const section = $id('plan-section');
+  const headerEl = $id('plan-header');
+  const itemsEl = $id('plan-items');
+  if (!plan || !plan.items || plan.items.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+  headerEl.textContent = `Round ${plan.round ?? '?'} · ${(plan.phase || '?').charAt(0).toUpperCase() + (plan.phase || '?').slice(1)} Phase`;
+
+  let html = '';
+  for (const item of plan.items) {
+    const isBot = item.source === 'bot';
+    const status = item.status;
+    const label = item.description || item.action?.arg || item.action?.cardId || 'Action';
+    const score = item.score != null ? item.score.toFixed(3) : '';
+    const cat = item.category || '';
+    const statusIcon = status === 'done' ? '&#10003;' : status === 'current' ? '&#9654;' : status === 'predicted' ? '&#9670;' : '&nbsp;';
+    const cls = `plan-item plan-${status === 'done' ? 'done' : status === 'current' ? 'current' : status === 'predicted' ? 'predicted' : 'pending'} plan-${isBot ? 'bot' : 'opp'}`;
+    html += `<div class="${cls}" title="${cat}">`;
+    html += `<span class="plan-icon">${statusIcon}</span>`;
+    html += `<span class="plan-label">${label}</span>`;
+    if (score) html += `<span class="plan-score">${score}</span>`;
+    html += `<span class="plan-source">${isBot ? 'B' : 'O'}</span>`;
+    html += `</div>`;
+  }
+  itemsEl.innerHTML = html;
+}
+
 function log(msg) {
   const el = $id('log');
   const d = document.createElement('div');
@@ -59,12 +89,20 @@ async function refreshStatus() {
   $id('toggle-ai-play').disabled = false;
   $id('toggle-ai-play').checked = status.isAiPlaying;
   $id('btn-trigger-ai').disabled = !canTriggerAi;
+
+  renderPlan(status.plan);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   renderNetwork();
   refreshStatus();
   setInterval(refreshStatus, 2000);
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'PLAN_UPDATE') {
+    renderPlan(msg.plan);
+  }
 });
 
 $id('toggle-recording').addEventListener('change', async (e) => {

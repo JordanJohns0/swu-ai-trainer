@@ -4,6 +4,7 @@ const SELECT_CARD_MODES = ['resource', 'target', 'defend', 'discard', 'play', 'a
 const CARD_FEATURE_COUNT = 10 * MAX_CARDS_IN_ZONE * 7;
 const STATE_SIZE = NUM_SCALAR_FEATURES + CARD_FEATURE_COUNT;
 const ACTION_FEATURE_SIZE = 64;
+const ACTION_GAIN = 5;
 const PHASES = ['setup', 'action', 'regroup', 'initiative', 'end'];
 let cachedModel = null;
 
@@ -14,6 +15,23 @@ function encodeGameState(gameState) {
   if (!gameState || !gameState.players) return new Float64Array(STATE_SIZE);
   const playerIds = Object.keys(gameState.players);
   const myId = findActivePlayerId(gameState);
+  const opponentId = playerIds.find((id) => id !== myId) || playerIds[0];
+  const me = gameState.players[myId] || {};
+  const opp = gameState.players[opponentId] || {};
+  const mine = me.cardPiles || {};
+  const theirs = opp.cardPiles || {};
+  const scalars = encodeScalarFeatures(gameState, me, opp, mine, theirs);
+  const cardFeatures = encodeCardFeatures(mine, theirs);
+  const out = new Float64Array(STATE_SIZE);
+  out.set(scalars, 0);
+  out.set(cardFeatures, NUM_SCALAR_FEATURES);
+  return out;
+}
+
+function encodeGameStateForPlayer(gameState, playerId) {
+  if (!gameState || !gameState.players) return new Float64Array(STATE_SIZE);
+  const playerIds = Object.keys(gameState.players);
+  const myId = playerId;
   const opponentId = playerIds.find((id) => id !== myId) || playerIds[0];
   const me = gameState.players[myId] || {};
   const opp = gameState.players[opponentId] || {};
@@ -167,17 +185,20 @@ function encodeActions(actions) {
     f.push(+(arg === ''));
     f.push(action.cardId ? normalize(hashCardId(action.cardId), 1) : 0);
     while (f.length < ACTION_FEATURE_SIZE) f.push(0);
-    return new Float64Array(f);
+    const scaled = new Float64Array(ACTION_FEATURE_SIZE);
+    for (let i = 0; i < ACTION_FEATURE_SIZE; i++) scaled[i] = f[i] * ACTION_GAIN;
+    return scaled;
   });
 }
 
 class Layer {
-  constructor(inSize, outSize, activation) {
+  constructor(inSize, outSize, activation, outputScale) {
     this.w = new Float64Array(inSize * outSize);
     this.b = new Float64Array(outSize);
     this.inSize = inSize;
     this.outSize = outSize;
     this.activation = activation;
+    this.outputScale = outputScale || 1;
     const scale = Math.sqrt(2.0 / inSize);
     for (let i = 0; i < this.w.length; i++) this.w[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.b.length; i++) this.b[i] = 0;
@@ -191,19 +212,22 @@ class Layer {
         sum += input[i] * this.w[o * this.inSize + i];
       }
       if (!isFinite(sum)) sum = 0;
-      out[o] = this.activation === 'relu' ? Math.max(0, sum) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(sum, -100), 100))) : sum;
+      let val = this.activation === 'relu' ? Math.max(0, sum) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(sum, -100), 100))) : sum;
+      if (this.outputScale !== 1) val *= this.outputScale;
+      out[o] = val;
     }
     return out;
   }
 
   getWeights() {
-    return { w: Array.from(this.w), b: Array.from(this.b), inSize: this.inSize, outSize: this.outSize, activation: this.activation };
+    return { w: Array.from(this.w), b: Array.from(this.b), inSize: this.inSize, outSize: this.outSize, activation: this.activation, outputScale: this.outputScale };
   }
 
   setWeights(data) {
     if (data.w && data.w.length === this.inSize * this.outSize) {
       this.w = new Float64Array(data.w);
       this.b = new Float64Array(data.b);
+      if (data.outputScale != null) this.outputScale = data.outputScale;
     }
   }
 
@@ -214,7 +238,9 @@ class Layer {
       z[o] = this.b[o];
       for (let i = 0; i < this.inSize; i++) z[o] += input[i] * this.w[o * this.inSize + i];
       if (!isFinite(z[o])) z[o] = 0;
-      a[o] = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(z[o], -100), 100))) : z[o];
+      let val = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(z[o], -100), 100))) : z[o];
+      if (this.outputScale !== 1) val *= this.outputScale;
+      a[o] = val;
     }
     const dz = new Float64Array(this.outSize);
     for (let o = 0; o < this.outSize; o++) {
@@ -223,7 +249,7 @@ class Layer {
       } else if (this.activation === 'relu') {
         dz[o] = target[o] * (z[o] > 0 ? 1 : 0);
       } else {
-        dz[o] = target[o];
+        dz[o] = target[o] * this.outputScale;
       }
       if (!isFinite(dz[o])) dz[o] = 0;
       dz[o] = Math.min(Math.max(dz[o], -5), 5);
@@ -257,7 +283,9 @@ class Layer {
       z[o] = this.b[o];
       for (let i = 0; i < this.inSize; i++) z[o] += input[i] * this.w[o * this.inSize + i];
       if (!isFinite(z[o])) z[o] = 0;
-      a[o] = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(z[o], -100), 100))) : z[o];
+      let val = this.activation === 'relu' ? Math.max(0, z[o]) : this.activation === 'sigmoid' ? 1 / (1 + Math.exp(-Math.min(Math.max(z[o], -100), 100))) : z[o];
+      if (this.outputScale !== 1) val *= this.outputScale;
+      a[o] = val;
     }
     const dz = new Float64Array(this.outSize);
     for (let o = 0; o < this.outSize; o++) {
@@ -266,7 +294,7 @@ class Layer {
       } else if (this.activation === 'relu') {
         dz[o] = target[o] * (z[o] > 0 ? 1 : 0);
       } else {
-        dz[o] = target[o];
+        dz[o] = target[o] * this.outputScale;
       }
       if (!isFinite(dz[o])) dz[o] = 0;
       dz[o] = Math.min(Math.max(dz[o], -5), 5);
@@ -287,9 +315,11 @@ class Layer {
     return { dw, dz, da_out };
   }
 
-  applyGradients(dwAccum, dzAccum, lr) {
+  applyGradients(dwAccum, dzAccum, lr, weightDecay) {
+    weightDecay = weightDecay || 0;
     for (let i = 0; i < this.w.length; i++) {
-      this.w[i] -= lr * Math.min(Math.max(dwAccum[i], -10), 10);
+      const decay = weightDecay * this.w[i];
+      this.w[i] -= lr * (Math.min(Math.max(dwAccum[i], -10), 10) + decay);
     }
     for (let i = 0; i < this.b.length; i++) {
       this.b[i] -= lr * Math.min(Math.max(dzAccum[i], -10), 10);
@@ -302,7 +332,7 @@ class NeuralNet {
     this.layers = [
       new Layer(STATE_SIZE + ACTION_FEATURE_SIZE, 128, 'relu'),
       new Layer(128, 64, 'relu'),
-      new Layer(64, 1, 'linear')
+      new Layer(64, 1, 'linear', 5)
     ];
   }
 
@@ -335,7 +365,7 @@ class NeuralNet {
     }
   }
 
-  trainRankingStep(state, actionTensors, takenIndex, isWin, lr, margin, topK = 0) {
+  trainRankingStep(state, actionTensors, takenIndex, isWin, lr, margin, topK = 0, weightDecay = 0.01) {
     const combineds = actionTensors.map(af => {
       const c = new Float64Array(STATE_SIZE + ACTION_FEATURE_SIZE);
       c.set(state, 0);
@@ -408,7 +438,7 @@ class NeuralNet {
 
     if (anyGrad) {
       for (let i = 0; i < this.layers.length; i++) {
-        this.layers[i].applyGradients(accumDws[i], accumDzs[i], lr);
+        this.layers[i].applyGradients(accumDws[i], accumDzs[i], lr, weightDecay);
       }
     }
 

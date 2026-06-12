@@ -98,3 +98,63 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 
 #log { max-height: 120px; overflow-y: auto; font-size: 11px; color: #8b949e; }
 #log div { padding: 1px 0; border-bottom: 1px solid #21262d; }
+
+.plan-header {
+  font-size: 11px; font-weight: 600; color: #58a6ff;
+  margin-bottom: 6px;
+}
+.plan-items {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 160px; overflow-y: auto;
+}
+.plan-item {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 6px; border-radius: 4px;
+  font-size: 11px; line-height: 1.3;
+}
+.plan-item.plan-bot {
+  background: rgba(35,134,54,0.08);
+  border-left: 2px solid #238636;
+}
+.plan-item.plan-opp {
+  background: rgba(248,81,73,0.06);
+  border-left: 2px solid #f85149;
+}
+.plan-item.plan-done {
+  opacity: 0.45;
+}
+.plan-item.plan-done .plan-icon {
+  color: #3fb950;
+}
+.plan-item.plan-current {
+  background: rgba(88,166,255,0.12);
+  border-left-color: #58a6ff;
+}
+.plan-item.plan-current .plan-icon {
+  color: #58a6ff;
+}
+.plan-item.plan-predicted .plan-icon {
+  color: #f85149;
+}
+.plan-icon {
+  width: 14px; text-align: center; flex-shrink: 0;
+  font-size: 10px;
+}
+.plan-label {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #f0f6fc;
+}
+.plan-status {
+  font-size: 10px; color: #8b949e; flex-shrink: 0;
+}
+.plan-score {
+  font-size: 10px; color: #8b949e; flex-shrink: 0;
+  font-family: monospace;
+}
+.plan-source {
+  font-size: 9px; font-weight: 700; flex-shrink: 0;
+  width: 16px; text-align: center; border-radius: 3px;
+  padding: 0 2px;
+}
+.plan-bot .plan-source { color: #3fb950; background: rgba(63,185,80,0.15); }
+.plan-opp .plan-source { color: #f85149; background: rgba(248,81,73,0.15); }

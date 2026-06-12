@@ -18,13 +18,27 @@ let lastTabId = null;
 let failedActionKeys = new Set();
 let lastSentActionKey = null;
 let lastSentStateHash = null;
+let currentTurnPlan = null;
 
 function getActionKey(action) {
   return action.type + ':' + (action.arg ?? action.cardId ?? '');
 }
 
+function hashActionKey(key) {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) { hash = ((hash << 5) - hash) + key.charCodeAt(i); hash |= 0; }
+  return ((hash % 10000) + 10000) % 10000 / 10000;
+}
+
 function getActionSetHash(gameState) {
   const actions = getAvailableActions(gameState);
+  return actions.map(a => getActionKey(a)).sort().join('|');
+}
+
+function getBotActionsHash(state) {
+  const botId = currentGameRecording?.playerId;
+  if (!botId || !state?.players) return '';
+  const actions = getActionsForPlayer(state, botId);
   return actions.map(a => getActionKey(a)).sort().join('|');
 }
 
@@ -46,7 +60,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const recordings = await getGameRecordingCount();
         const stats = await getTrainingStats();
         const enabled = await getSetting('recordingEnabled', true);
-        sendResponse({ recordings, stats, enabled, isAiPlaying, autoPlay, autoRequeue, autoTrain, gameCount, activeGame: !!currentGameRecording, minWait, maxWait });
+        const planJson = currentTurnPlan ? JSON.parse(JSON.stringify(currentTurnPlan)) : null;
+        sendResponse({ recordings, stats, enabled, isAiPlaying, autoPlay, autoRequeue, autoTrain, gameCount, activeGame: !!currentGameRecording, minWait, maxWait, plan: planJson });
         return;
       }
       if (msg.type === 'TOGGLE_RECORDING') {
@@ -313,6 +328,7 @@ async function finalizeRecording(winners, data) {
   await saveGameRecording(recording);
   if (data?.id) lastFinalizedGameId = data.id;
   currentGameRecording = null;
+  currentTurnPlan = null;
   failedActionKeys.clear();
   lastSentActionKey = null;
   lastSentStateHash = null;
@@ -368,6 +384,33 @@ async function selectAiAction(recording) {
     }
     console.log('selectAiAction: no sequence or resource action, falling through to model', { actionsCount: actions.length });
     if (actions.length === 0) return null;
+
+    // Try plan-based selection first (only during action/resource phases)
+    const planPhase = detectPhase(latestState);
+    if (currentTurnPlan && currentTurnPlan.items && currentTurnPlan.items.length > 0 && (planPhase === 'action' || planPhase === 'resource')) {
+      if (currentTurnPlan.stateHash !== getBotActionsHash(latestState)) {
+        currentTurnPlan = reviseTurnPlan(latestState, currentTurnPlan);
+        broadcastPlan(currentTurnPlan);
+      }
+      const currentItem = currentTurnPlan.items.find(i => i.status === 'current' && i.source === 'bot');
+      if (currentItem) {
+        const actionKey = getActionKey(currentItem.action);
+        if (actions.some(a => getActionKey(a) === actionKey)) {
+          console.log('selectAiAction: plan returned', actionKey, currentItem.description);
+          return currentItem.action;
+        }
+      }
+      const firstPending = currentTurnPlan.items.find(i => i.source === 'bot' && (i.status === 'pending' || i.status === 'current'));
+      if (firstPending) {
+        const actionKey = getActionKey(firstPending.action);
+        if (actions.some(a => getActionKey(a) === actionKey)) {
+          firstPending.status = 'current';
+          broadcastPlan(currentTurnPlan);
+          console.log('selectAiAction: plan first pending', actionKey, firstPending.description);
+          return firstPending.action;
+        }
+      }
+    }
 
     const model = await loadModel();
     if (!model) { console.log('selectAiAction: no model loaded'); return null; }
@@ -469,6 +512,281 @@ function describeAction(a, gameState) {
   }
   return a.text || a.arg || a.command || 'Action';
 }
+
+// ── Turn Plan ─────────────────────────────────────────────────────
+
+function categorizeAction(action, state, playerId) {
+  if (action.type === 'menuButton') {
+    const arg = String(action.arg ?? '').toLowerCase();
+    if (arg === 'pass' || arg.includes('pass')) return 'pass';
+    if (arg === 'keep' || arg === 'mulligan') return 'mulligan';
+    if (arg === 'claiminitiative' || arg.includes('claim') || arg.includes('initiative')) return 'initiative';
+    if (arg === 'resource' || arg.includes('resource')) return 'resource';
+    if (arg === 'attack' || arg.includes('attack')) return 'attack';
+    if (arg === 'play' || arg.includes('play') || arg === 'done') return 'play';
+    return 'menu';
+  }
+  if (action.type === 'cardClicked' && state) {
+    const info = findCardInfo(action.cardId, state);
+    if (info) {
+      if (info.pile === 'hand') return 'play';
+      if (info.pile === 'groundArena' || info.pile === 'spaceArena') return 'attack';
+      if (info.pile === 'leader') return 'ability';
+    }
+    return 'select';
+  }
+  return 'other';
+}
+
+function getActionsForPlayer(gameState, playerId) {
+  if (!gameState?.players) return [];
+  const player = gameState.players[playerId];
+  if (!player) return [];
+  const actions = [];
+  const prompt = player.promptState;
+  if (prompt && prompt.buttons && prompt.buttons.length > 0) {
+    for (let bi = 0; bi < prompt.buttons.length; bi++) {
+      const btn = prompt.buttons[bi];
+      const btnText = btn.text || btn.label || btn.name || btn.title || btn.description || btn.value || btn.content || btn.arg || btn.command || `Option ${bi + 1}`;
+      actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? '', uuid: btn.uuid ?? prompt.promptUuid ?? '', command: btn.command || '', text: btnText });
+    }
+  }
+  const piles = player.cardPiles || {};
+  for (const pileKey of ['hand', 'groundArena', 'spaceArena', 'resources', 'discard', 'leader']) {
+    const pile = piles[pileKey];
+    if (Array.isArray(pile)) {
+      for (const card of pile) {
+        if (card.selectable && !card.selected) actions.push({ type: 'cardClicked', cardId: card.uuid || card.id });
+      }
+    } else if (pile && pile.selectable && !pile.selected) {
+      actions.push({ type: 'cardClicked', cardId: pile.uuid || pile.id });
+    }
+  }
+  const leader = player.leader;
+  if (leader && leader.selectable && !leader.selected) {
+    const lid = leader.uuid || leader.id;
+    if (lid) actions.push({ type: 'cardClicked', cardId: lid });
+  }
+  const base = player.base;
+  if (base && base.selectable && !base.selected) {
+    const bid = base.uuid || base.id;
+    if (bid) actions.push({ type: 'cardClicked', cardId: bid });
+  }
+  return actions;
+}
+
+function predictOpponentActions(state, model) {
+  if (!state?.players) return [];
+  const botId = currentGameRecording?.playerId;
+  if (!botId) return [];
+  const oppId = Object.keys(state.players).find(id => id !== botId);
+  if (!oppId) return [];
+  const oppActions = getActionsForPlayer(state, oppId);
+  if (oppActions.length === 0) return [];
+  const stateTensor = encodeGameStateForPlayer(state, oppId);
+  const actionFeatures = encodeActions(oppActions);
+  const scored = oppActions.map((a, i) => {
+    const rawScore = model ? model.forward(stateTensor, actionFeatures[i]) : 0;
+    const dispersion = hashActionKey(getActionKey(a)) * 0.02 - 0.01;
+    return {
+      action: a,
+      description: describeAction(a, state),
+      score: rawScore + dispersion,
+      source: 'opponent',
+      status: 'predicted',
+      category: categorizeAction(a, state, oppId)
+    };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function isBotFirstActive(state) {
+  const botId = currentGameRecording?.playerId;
+  if (!botId || !state?.players) return true;
+  const me = state.players[botId];
+  if (me?.isActionPhaseActivePlayer) return true;
+  const activeId = findActivePlayerId(state);
+  return activeId === botId;
+}
+
+function interleaveItems(botItems, oppItems, botFirst) {
+  const items = [];
+  let bi = 0, oi = 0;
+  let nextIsBot = botFirst;
+  while (bi < botItems.length || oi < oppItems.length) {
+    if (nextIsBot && bi < botItems.length) {
+      items.push({ ...botItems[bi], status: 'pending' });
+      bi++;
+    } else if (!nextIsBot && oi < oppItems.length) {
+      items.push({ ...oppItems[oi], status: 'predicted' });
+      oi++;
+    } else if (bi < botItems.length) {
+      items.push({ ...botItems[bi], status: 'pending' });
+      bi++;
+    } else if (oi < oppItems.length) {
+      items.push({ ...oppItems[oi], status: 'predicted' });
+      oi++;
+    }
+    nextIsBot = !nextIsBot;
+  }
+  return items;
+}
+
+function detectPhase(state) {
+  if (!state?.players) return 'unknown';
+  const botId = currentGameRecording?.playerId;
+  if (!botId) return 'unknown';
+  const me = state.players[botId];
+  const prompt = me?.promptState || {};
+  const promptType = prompt.promptType || '';
+  const mode = prompt.selectCardMode || 'none';
+  if (state.winners?.length > 0) return 'end';
+  if (promptType === 'resource' || (mode !== 'none' && mode.includes('resource'))) return 'resource';
+  if (promptType === 'initiative') return 'initiative';
+  if (promptType === 'action' || promptType === 'regroup') return promptType;
+  const anyPrompt = Object.values(state.players).find(p => p?.promptState?.promptType);
+  if (anyPrompt) return anyPrompt.promptState.promptType;
+  return 'action';
+}
+
+async function generateTurnPlan(state) {
+  const botId = currentGameRecording?.playerId;
+  if (!botId || !state?.players) return null;
+  const model = await loadModel();
+  const oppId = Object.keys(state.players).find(id => id !== botId);
+  const phase = detectPhase(state);
+  const round = state.roundNumber || 0;
+  const stateHash = getBotActionsHash(state);
+
+  const allActions = getActionsForPlayer(state, botId);
+  const activeActions = allActions.filter(a => !failedActionKeys.has(getActionKey(a)));
+  if (activeActions.length === 0) return null;
+
+  const stateTensor = encodeGameState(state);
+  const actionFeatures = encodeActions(activeActions);
+
+  const scoredBot = activeActions.map((a, i) => {
+    const rawScore = model ? model.forward(stateTensor, actionFeatures[i]) : 0;
+    const dispersion = hashActionKey(getActionKey(a)) * 0.02 - 0.01;
+    return {
+      action: a,
+      description: describeAction(a, state),
+      score: rawScore + dispersion,
+      source: 'bot',
+      status: 'pending',
+      category: categorizeAction(a, state, botId)
+    };
+  });
+
+  const catOrder = ['resource', 'play', 'ability', 'attack', 'select', 'menu', 'initiative', 'mulligan', 'pass', 'other'];
+  scoredBot.sort((a, b) => {
+    const ca = catOrder.indexOf(a.category);
+    const cb = catOrder.indexOf(b.category);
+    if (ca !== cb) return ca - cb;
+    return b.score - a.score;
+  });
+
+  const oppPreds = predictOpponentActions(state, model);
+  const botFirst = isBotFirstActive(state);
+  const items = interleaveItems(scoredBot, oppPreds, botFirst);
+
+  const plan = {
+    phase,
+    round,
+    stateHash,
+    items,
+    botId,
+    oppId: oppId || null,
+    generatedAt: Date.now()
+  };
+  return plan;
+}
+
+function reviseTurnPlan(state, plan) {
+  if (!plan || !plan.items || !state) return plan;
+  const botId = currentGameRecording?.playerId;
+  const currentHash = getBotActionsHash(state);
+  const currentActions = botId ? getActionsForPlayer(state, botId) : getAvailableActions(state);
+  const currentKeys = new Set(currentActions.map(a => getActionKey(a)));
+
+  // 1. Detect done actions: pending bot actions that are no longer available
+  for (const item of plan.items) {
+    if (item.source === 'bot' && item.status === 'pending') {
+      if (!currentKeys.has(getActionKey(item.action))) {
+        item.status = 'done';
+      }
+    }
+    if (item.source === 'opponent' && item.status === 'predicted') {
+      if (!currentKeys.has(getActionKey(item.action))) {
+        item.status = 'done';
+      }
+    }
+  }
+
+  // 2. Mark current: first pending bot action
+  let foundCurrent = false;
+  for (const item of plan.items) {
+    if (item.source === 'bot' && item.status === 'pending' && !foundCurrent) {
+      item.status = 'current';
+      foundCurrent = true;
+    } else if (item.source === 'bot' && item.status === 'current' && foundCurrent) {
+      item.status = 'pending';
+    }
+  }
+
+  // 3. Remove predicted items that correspond to completed bot actions (stale predictions)
+  const completedCount = plan.items.filter(i => i.status === 'done' && i.source === 'bot').length;
+  if (completedCount > 0) {
+    let predRemoved = 0;
+    plan.items = plan.items.filter(i => {
+      if (i.source === 'opponent' && (i.status === 'done' || i.status === 'predicted')) {
+        if (predRemoved < completedCount) { predRemoved++; return false; }
+      }
+      return true;
+    });
+  }
+
+  // 4. Add new actions that appeared since plan generation
+  const planKeys = new Set(plan.items.filter(i => i.source === 'bot').map(i => getActionKey(i.action)));
+  const newActions = currentActions.filter(a => !planKeys.has(getActionKey(a)) && !failedActionKeys.has(getActionKey(a)));
+  if (newActions.length > 0) {
+    const model = loadModel(); // best-effort fire-and-forget
+    if (state?.players) {
+      model.then(m => {
+        const st = encodeGameState(state);
+        const af = encodeActions(newActions);
+        const newScored = newActions.map((a, i) => ({
+          action: a,
+          description: describeAction(a, state),
+          score: m ? m.forward(st, af[i]) : 0,
+          source: 'bot',
+          status: 'pending',
+          category: categorizeAction(a, state, botId)
+        }));
+        const catOrder = ['resource', 'play', 'ability', 'attack', 'select', 'menu', 'initiative', 'mulligan', 'pass', 'other'];
+        newScored.sort((a, b) => {
+          const ca = catOrder.indexOf(a.category);
+          const cb = catOrder.indexOf(b.category);
+          if (ca !== cb) return ca - cb;
+          return b.score - a.score;
+        });
+        plan.items.push(...newScored.map(i => ({ ...i, status: 'pending' })));
+        broadcastPlan(plan);
+      });
+    }
+  }
+
+  plan.stateHash = currentHash;
+  return plan;
+}
+
+function broadcastPlan(plan) {
+  const serialized = plan ? JSON.parse(JSON.stringify(plan)) : null;
+  chrome.runtime.sendMessage({ type: 'PLAN_UPDATE', plan: serialized }).catch(() => {});
+}
+
+// ── End Turn Plan ─────────────────────────────────────────────────
 
 async function sendRecommendations(recording) {
   try {
@@ -591,6 +909,16 @@ async function sendRecommendations(recording) {
           return;
         }
       }
+    }
+
+    // Turn plan generation/update (for visualization and action ordering)
+    if (currentGameRecording?.playerId && latestState && actions.length > 0) {
+      if (!currentTurnPlan || currentTurnPlan.stateHash !== getBotActionsHash(latestState) || currentTurnPlan.round !== (latestState.roundNumber || 0)) {
+        currentTurnPlan = await generateTurnPlan(latestState);
+      } else {
+        currentTurnPlan = reviseTurnPlan(latestState, currentTurnPlan);
+      }
+      broadcastPlan(currentTurnPlan);
     }
 
     // Auto-play: auto-execute the best action without overlay
