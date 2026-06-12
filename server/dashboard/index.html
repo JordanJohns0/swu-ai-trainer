@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWU AI Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+header h1 { font-size: 24px; font-weight: 600; }
+.header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-dim); }
+.status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.status-dot.online { background: var(--green); }
+.status-dot.offline { background: var(--red); }
+.status-dot.partial { background: var(--yellow); }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.card.full { grid-column: 1 / -1; }
+.card h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--accent); }
+
+.stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.stat-row:last-child { border-bottom: none; }
+.stat-row .label { color: var(--text-dim); }
+.stat-row .value { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.btn { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; background: #21262d; color: var(--text); transition: all .15s; }
+.btn:hover { background: #30363d; border-color: var(--text-dim); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.btn.primary:hover { background: #388bfd; }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.danger:hover { background: var(--red); color: #fff; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+canvas { width: 100% !important; height: auto !important; max-height: 200px; }
+
+.network-viz { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 0; flex-wrap: wrap; }
+.layer { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 12px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; min-width: 70px; text-align: center; }
+.layer .name { font-size: 11px; color: var(--text-dim); }
+.layer .size { font-size: 16px; font-weight: 700; }
+.layer .detail { font-size: 10px; color: var(--text-dim); }
+.layer.output-layer { border-color: var(--accent); }
+.arrow { font-size: 18px; color: var(--text-dim); }
+
+.game-list { max-height: 400px; overflow-y: auto; }
+.game-item { padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.game-item:last-child { border-bottom: none; }
+.game-item .meta { display: flex; gap: 16px; color: var(--text-dim); }
+.game-item .id { color: var(--accent); cursor: pointer; }
+.game-item .id:hover { text-decoration: underline; }
+
+.accuracy-chart { margin-top: 8px; }
+.chart-container { width: 100%; height: 180px; position: relative; }
+
+.game-detail { margin-top: 8px; padding: 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 4px; font-size: 11px; max-height: 300px; overflow: auto; white-space: pre-wrap; font-family: monospace; display: none; }
+
+.toast { position: fixed; bottom: 20px; right: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 20px; font-size: 13px; z-index: 100; opacity: 0; transition: opacity .3s; }
+.toast.show { opacity: 1; }
+
+@media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>SWU AI Trainer</h1>
+    <div class="header-right">
+      <span><span class="status-dot offline" id="srv-status-dot"></span>Server</span>
+      <span><span class="status-dot offline" id="ext-status-dot"></span>Extension</span>
+      <span id="refresh-countdown">30s</span>
+      <button class="btn" onclick="refresh()">Refresh</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Model Card -->
+    <div class="card">
+      <h2>Neural Network</h2>
+      <div class="network-viz" id="network-viz"></div>
+      <div class="stat-row"><span class="label">Weights File</span><span class="value" id="weights-status">--</span></div>
+    </div>
+
+    <!-- Training Stats Card -->
+    <div class="card">
+      <h2>Training Stats</h2>
+      <div class="stat-row"><span class="label">Games Trained</span><span class="value" id="stat-games">0</span></div>
+      <div class="stat-row"><span class="label">Last Trained</span><span class="value" id="stat-last">--</span></div>
+      <div class="stat-row"><span class="label">Preference Accuracy</span><span class="value" id="stat-accuracy">--</span></div>
+      <div class="stat-row"><span class="label">Total Examples</span><span class="value" id="stat-examples">0</span></div>
+      <div class="accuracy-chart">
+        <div class="chart-container"><canvas id="accuracy-canvas"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Games Card -->
+    <div class="card full">
+      <h2>Recorded Games</h2>
+      <div class="stat-row"><span class="label">Total Recordings</span><span class="value" id="game-count">0</span></div>
+      <div class="game-list" id="game-list"></div>
+      <div class="game-detail" id="game-detail"></div>
+    </div>
+
+    <!-- Controls Card -->
+    <div class="card full">
+      <h2>Controls</h2>
+      <div class="btn-row">
+        <button class="btn" onclick="exportData()">Export Games</button>
+        <button class="btn" onclick="exportWeights()">Export Weights</button>
+        <button class="btn danger" onclick="clearGames()">Clear Games</button>
+        <button class="btn danger" onclick="clearAll()">Clear All</button>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:var(--text-dim)">Training: click "Train Model Now" in the extension popup</div>
+    </div>
+  </div>
+</div>
+
+<script src="dashboard.js"></script>
+</body>
+</html>

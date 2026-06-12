@@ -3,6 +3,7 @@ setlocal
 set "ROOT=%~dp0"
 set "SERVER_DIR=%ROOT%forceteki"
 set "CLIENT_DIR=%ROOT%forceteki-client"
+set "DATA_SERVER_DIR=%ROOT%server"
 
 echo === SWU Local Dev Setup ===
 
@@ -32,11 +33,19 @@ cd /d "%CLIENT_DIR%"
 call npm install
 
 echo.
+echo Installing data server dependencies...
+cd /d "%DATA_SERVER_DIR%"
+call npm install
+
+echo.
 echo Starting server on port 9500...
 start "SWU Server" cmd /c "cd /d "%SERVER_DIR%" && npm run dev"
 
 echo Starting client on port 3000...
 start "SWU Client" cmd /c "cd /d "%CLIENT_DIR%" && npm run dev"
+
+echo Starting data server on port 3456...
+start "SWU Data Server" cmd /c "cd /d "%DATA_SERVER_DIR%" && npm start"
 
 echo.
 echo Waiting for ports...
@@ -45,7 +54,9 @@ powershell -Command "$t=0; while($t -lt 120){try{$c=[System.Net.Sockets.TcpClien
 
 echo.
 echo === Running ===
-echo   Server: http://localhost:9500
-echo   Client: http://localhost:3000
+echo   Game Server: http://localhost:9500
+echo   Client:      http://localhost:3000
+echo   Data Server: http://localhost:3456
 echo.
 start http://localhost:3000
+start http://localhost:3456

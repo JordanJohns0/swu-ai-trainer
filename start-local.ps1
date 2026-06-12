@@ -6,6 +6,7 @@ $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $serverDir = Join-Path $root "forceteki"
 $clientDir = Join-Path $root "forceteki-client"
+$dataServerDir = Join-Path $root "server"
 
 Write-Host "=== SWU Local Dev Setup ===" -ForegroundColor Cyan
 
@@ -36,6 +37,11 @@ Push-Location $clientDir
 npm install
 Pop-Location
 
+Write-Host "Installing data server dependencies..." -ForegroundColor Cyan
+Push-Location $dataServerDir
+npm install
+Pop-Location
+
 # Launch processes ------------------------------------
 Write-Host "`nStarting server (port 9500)..." -ForegroundColor Green
 $serverJob = Start-Job -ScriptBlock {
@@ -46,6 +52,11 @@ Write-Host "Starting client (port 3000)..." -ForegroundColor Green
 $clientJob = Start-Job -ScriptBlock {
   param($d) Push-Location $d; npm run dev; Pop-Location
 } -ArgumentList $clientDir
+
+Write-Host "Starting data server (port 3456)..." -ForegroundColor Green
+$dataServerJob = Start-Job -ScriptBlock {
+  param($d) Push-Location $d; npm start; Pop-Location
+} -ArgumentList $dataServerDir
 
 # Wait for ports to be open ---------------------------
 function Wait-Port($port, $label, $timeoutSec = 120) {
@@ -62,20 +73,24 @@ function Wait-Port($port, $label, $timeoutSec = 120) {
   return $false
 }
 
-$serverReady = Wait-Port 9500 "server"
+$serverReady = Wait-Port 9500 "game server"
 $clientReady = Wait-Port 3000 "client"
+$dataServerReady = Wait-Port 3456 "data server"
 
 # Open browser if both are up -------------------------
 if ($serverReady -and $clientReady -and -not $NoBrowser) {
   Start-Process "http://localhost:3000"
+  Start-Process "http://localhost:3456"
 }
 
 # Print status -----------------------------------------
 Write-Host "`n========================================" -ForegroundColor Cyan
-if ($serverReady) { Write-Host "  Server:   RUNNING (port 9500)" -ForegroundColor Green }
-  else { Write-Host "  Server:   TIMEOUT - check job output" -ForegroundColor Red }
-if ($clientReady) { Write-Host "  Client:   RUNNING (port 3000)" -ForegroundColor Green }
-  else { Write-Host "  Client:   TIMEOUT - check job output" -ForegroundColor Red }
+if ($serverReady) { Write-Host "  Game Server:   RUNNING (port 9500)" -ForegroundColor Green }
+  else { Write-Host "  Game Server:   TIMEOUT - check job output" -ForegroundColor Red }
+if ($clientReady) { Write-Host "  Client:        RUNNING (port 3000)" -ForegroundColor Green }
+  else { Write-Host "  Client:        TIMEOUT - check job output" -ForegroundColor Red }
+if ($dataServerReady) { Write-Host "  Data Server:   RUNNING (port 3456)" -ForegroundColor Green }
+  else { Write-Host "  Data Server:   TIMEOUT - check job output" -ForegroundColor Red }
 Write-Host "========================================" -ForegroundColor Cyan
 
 Write-Host "`nCommands to stop:" -ForegroundColor Gray

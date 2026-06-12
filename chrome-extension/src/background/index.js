@@ -61,7 +61,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const stats = await getTrainingStats();
         const enabled = await getSetting('recordingEnabled', true);
         const planJson = currentTurnPlan ? JSON.parse(JSON.stringify(currentTurnPlan)) : null;
-        sendResponse({ recordings, stats, enabled, isAiPlaying, autoPlay, autoRequeue, autoTrain, gameCount, activeGame: !!currentGameRecording, minWait, maxWait, plan: planJson });
+        const syncUrl = await getSyncServerUrl();
+        sendResponse({ recordings, stats, enabled, isAiPlaying, autoPlay, autoRequeue, autoTrain, gameCount, activeGame: !!currentGameRecording, minWait, maxWait, plan: planJson, syncServerUrl: syncUrl });
         return;
       }
       if (msg.type === 'TOGGLE_RECORDING') {
@@ -133,6 +134,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === 'EXPORT_DATA') {
         const games = await getGameRecordings();
         sendResponse({ ok: true, games });
+        return;
+      }
+      if (msg.type === 'SET_SYNC_SERVER') {
+        await setSyncServerUrl(msg.url || '');
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'SYNC_NOW') {
+        await syncAllToServer();
+        sendResponse({ ok: true });
         return;
       }
       if (msg.type === 'PING') {
@@ -326,6 +337,7 @@ async function finalizeRecording(winners, data) {
   currentGameRecording.completedAt = Date.now();
   const recording = currentGameRecording;
   await saveGameRecording(recording);
+  syncToServer('api/games', recording).catch(() => {});
   if (data?.id) lastFinalizedGameId = data.id;
   currentGameRecording = null;
   currentTurnPlan = null;
@@ -1289,6 +1301,12 @@ async function startTraining() {
       examples: recordings.reduce((s, g) => s + g.states.length, 0)
     });
     await markGamesTrained(recordings.map((g) => g.gameId));
+
+    // Sync to local server
+    syncToServer('api/weights', model.save()).catch(() => {});
+    const updatedStats = await getTrainingStats();
+    if (updatedStats) syncToServer('api/stats', updatedStats).catch(() => {});
+
     console.log(`Trained on ${recordings.length} games, final pref_acc=${(finalPrefAcc * 100).toFixed(2)}%`);
   } catch (e) {
     console.error('Training failed:', e);
@@ -1314,9 +1332,32 @@ async function trainOnGame(recording) {
 
     recording.trained = true;
     await saveGameRecording(recording);
+    syncToServer('api/games', recording).catch(() => {});
+
+    // Sync model + stats to local server
+    syncToServer('api/weights', model.save()).catch(() => {});
+    const updatedStats = await getTrainingStats();
+    if (updatedStats) syncToServer('api/stats', updatedStats).catch(() => {});
+
     console.log(`trainOnGame: 1 game, pref_acc=${(finalPrefAcc * 100).toFixed(2)}%`);
   } catch (e) {
     console.error('trainOnGame failed:', e);
+  }
+}
+
+async function syncAllToServer() {
+  try {
+    const games = await getGameRecordings();
+    for (const game of games) {
+      syncToServer('api/games', game).catch(() => {});
+    }
+    const model = await loadModel();
+    if (model) syncToServer('api/weights', model.save()).catch(() => {});
+    const stats = await getTrainingStats();
+    if (stats) syncToServer('api/stats', stats).catch(() => {});
+    console.log('syncAllToServer: synced', games.length, 'games');
+  } catch (e) {
+    console.error('syncAllToServer failed:', e);
   }
 }
 

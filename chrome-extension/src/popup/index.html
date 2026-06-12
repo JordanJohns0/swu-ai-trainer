@@ -69,6 +69,12 @@
       <button id="btn-export" class="btn secondary">Export Data</button>
       <button id="btn-clear" class="btn danger">Clear All Data</button>
       <button id="btn-diag" class="btn secondary">Diagnose WebSocket</button>
+      <button id="btn-dashboard" class="btn secondary">Open Dashboard</button>
+    </section>
+    <section id="server-section" class="card" style="display:flex;flex-direction:row;gap:6px;align-items:center">
+      <span style="font-size:11px;color:var(--text-dim)">Server:</span>
+      <input type="text" id="server-url" value="http://localhost:3456" style="flex:1;background:#0d1117;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 6px;font-size:11px">
+      <button id="btn-sync" class="btn" style="font-size:11px;padding:3px 8px">Sync</button>
     </section>
     <section id="diag-section" class="card" style="display:none;font-size:11px;word-break:break-all;">
       <div id="diag-content"></div>

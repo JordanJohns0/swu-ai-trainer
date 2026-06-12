@@ -168,3 +168,46 @@ async function getTrainingStats() {
     req.onerror = () => resolve(null);
   });
 }
+
+// ── Local Server Sync ────────────────────────────────
+
+let _syncServerUrl = null;
+
+async function getSyncServerUrl() {
+  if (_syncServerUrl) return _syncServerUrl;
+  _syncServerUrl = await getSetting('syncServerUrl', 'http://localhost:3456');
+  return _syncServerUrl;
+}
+
+async function setSyncServerUrl(url) {
+  _syncServerUrl = url;
+  await saveSetting('syncServerUrl', url);
+}
+
+async function syncToServer(endpoint, data) {
+  try {
+    const base = await getSyncServerUrl();
+    if (!base) return;
+    const url = base.replace(/\/+$/, '') + '/' + endpoint.replace(/^\/+/, '');
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+  } catch (e) {
+    // Server not running — silent fail
+  }
+}
+
+async function loadFromServer(endpoint) {
+  try {
+    const base = await getSyncServerUrl();
+    if (!base) return null;
+    const url = base.replace(/\/+$/, '') + '/' + endpoint.replace(/^\/+/, '');
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}

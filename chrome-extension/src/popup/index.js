@@ -90,6 +90,11 @@ async function refreshStatus() {
   $id('toggle-ai-play').checked = status.isAiPlaying;
   $id('btn-trigger-ai').disabled = !canTriggerAi;
 
+  // Load server URL
+  if (status.syncServerUrl) {
+    $id('server-url').value = status.syncServerUrl;
+  }
+
   renderPlan(status.plan);
 }
 
@@ -201,6 +206,23 @@ $id('btn-clear').addEventListener('click', async () => {
   await bg.sendMessage({ type: 'CLEAR_DATA' });
   log('All data cleared');
   refreshStatus();
+});
+
+$id('btn-dashboard').addEventListener('click', async () => {
+  const url = $id('server-url').value.trim() || 'http://localhost:3456';
+  chrome.tabs.create({ url });
+});
+
+$id('btn-sync').addEventListener('click', async () => {
+  const url = $id('server-url').value.trim();
+  await bg.sendMessage({ type: 'SET_SYNC_SERVER', url });
+  await bg.sendMessage({ type: 'SYNC_NOW' });
+  log('Synced to server: ' + url);
+});
+
+$id('server-url').addEventListener('change', async () => {
+  const url = $id('server-url').value.trim();
+  await bg.sendMessage({ type: 'SET_SYNC_SERVER', url });
 });
 
 $id('btn-diag').addEventListener('click', async () => {
