@@ -2,7 +2,7 @@ console.log('SWU AI BG VERSION 4');
 importScripts('storage.js');
 importScripts('model.js');
 
-let currentGameRecording = null;
+let gameSessions = new Map(); // serverGameId → session
 let gameCount = 0;
 let isAiPlaying = false;
 let aiPauseRequested = false;
@@ -16,13 +16,80 @@ let maxWait = 3000;
 let pendingRecommendations = null;
 let lastUnknownEvent = null;
 let lastTabId = null;
-let botPlayerId = null;
-let currentPlayerId = null;
 let playerTabMap = {};
-let failedActionKeys = new Set();
 let lastSentActionKey = {};
 let lastSentStateHash = {};
+
+// Active session globals (set before each message handler run)
+let currentGameRecording = null;
+let botPlayerId = null;
+let currentPlayerId = null;
+let failedActionKeys = new Set();
 let currentTurnPlan = null;
+
+function createGameSession(serverGameId, initialData) {
+  const recording = {
+    gameId: `game_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    timestamp: Date.now(),
+    gameNumber: ++gameCount,
+    playerId: null,
+    states: [],
+    actions: [],
+    winner: null,
+    trained: false,
+    initialState: initialData || null
+  };
+  const session = {
+    serverGameId,
+    recording,
+    failedActionKeys: new Set(),
+    currentTurnPlan: null,
+    currentPlayerId: null,
+    tabIds: new Set()
+  };
+  gameSessions.set(serverGameId, session);
+  return session;
+}
+
+function activateSession(session) {
+  if (session) {
+    currentGameRecording = session.recording;
+    botPlayerId = session.recording.playerId;
+    currentPlayerId = session.currentPlayerId;
+    failedActionKeys = session.failedActionKeys;
+    currentTurnPlan = session.currentTurnPlan;
+  } else {
+    currentGameRecording = null;
+    botPlayerId = null;
+    currentPlayerId = null;
+    failedActionKeys = new Set();
+    currentTurnPlan = null;
+  }
+}
+
+function getSessionForState(gameState) {
+  const gameId = gameState?.id;
+  return gameId ? (gameSessions.get(gameId) || null) : null;
+}
+
+function cleanupSession(serverGameId) {
+  const session = gameSessions.get(serverGameId);
+  if (!session) return;
+  if (session.recording === currentGameRecording) {
+    activateSession(null);
+  }
+  gameSessions.delete(serverGameId);
+}
+
+function syncSessionGlobals() {
+  for (const [, s] of gameSessions) {
+    if (s.recording === currentGameRecording) {
+      s.currentTurnPlan = currentTurnPlan;
+      s.currentPlayerId = currentPlayerId;
+      return;
+    }
+  }
+}
 
 function getActionKey(action) {
   return action.type + ':' + (action.arg ?? action.cardId ?? '');
@@ -209,10 +276,67 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function handlePageMessage(payload, senderTabId) {
   const { type, data, event, args } = payload;
 
+  // Route to correct game session by server game ID
+  const serverGameId = data?.id || payload.data?.id || null;
+  let session = null;
+
+  if (type === 'GAMESTATE' && data) {
+    if (serverGameId && gameSessions.has(serverGameId)) {
+      session = gameSessions.get(serverGameId);
+    } else if (serverGameId) {
+      // Check if this tab had a lobby session; if so, adopt its recording
+      const lobbyKey = `lobby_${senderTabId}`;
+      const lobbySession = gameSessions.get(lobbyKey);
+      if (lobbySession) {
+        // Transfer recording from lobby session to game ID
+        lobbySession.serverGameId = serverGameId;
+        gameSessions.set(serverGameId, lobbySession);
+        gameSessions.delete(lobbyKey);
+        session = lobbySession;
+        // Update initial state if we didn't have one
+        if (!session.recording.initialState) session.recording.initialState = data;
+      } else {
+        session = createGameSession(serverGameId, data);
+      }
+    }
+    if (session) session.tabIds.add(senderTabId);
+    activateSession(session);
+  } else if (type === 'GAME_EVENT') {
+    const { data: eventData } = payload;
+    if (eventData?.id && serverGameId && gameSessions.has(serverGameId)) {
+      session = gameSessions.get(serverGameId);
+    } else if (eventData?.players && eventData?.id && serverGameId) {
+      // GAME_EVENT with full game state - could be a new game
+      if (gameSessions.has(serverGameId)) {
+        session = gameSessions.get(serverGameId);
+      } else {
+        session = createGameSession(serverGameId, eventData);
+      }
+      if (session) session.tabIds.add(senderTabId);
+    }
+    activateSession(session);
+  } else if (type === 'LOBBYSTATE' && data) {
+    const lobbyKey = serverGameId || `lobby_${senderTabId}`;
+    if (data.gameOngoing) {
+      if (gameSessions.has(lobbyKey)) {
+        session = gameSessions.get(lobbyKey);
+      } else {
+        session = createGameSession(lobbyKey, data);
+        session.tabIds.add(senderTabId);
+      }
+      activateSession(session);
+    }
+  } else {
+    // OUTGOING etc. - activate session if we can find one
+    if (serverGameId && gameSessions.has(serverGameId)) {
+      session = gameSessions.get(serverGameId);
+    }
+    activateSession(session);
+  }
+
   const shouldAct = (isAiPlaying || autoPlay) && currentGameRecording;
 
   if (type === 'LOBBYSTATE' && data) {
-    if (data.gameOngoing && !currentGameRecording) startNewRecording(data);
     if (shouldAct) {
       await sendRecommendations(currentGameRecording);
     }
@@ -220,7 +344,14 @@ async function handlePageMessage(payload, senderTabId) {
 
   if (type === 'GAMESTATE' && data) {
     lastUnknownEvent = null;
-    if (!currentGameRecording) startNewRecording(data);
+    if (!currentGameRecording) {
+      // No session was found/created - create one now
+      if (serverGameId) {
+        session = createGameSession(serverGameId, data);
+        session.tabIds.add(senderTabId);
+        activateSession(session);
+      }
+    }
     if (currentGameRecording) {
       if (!currentGameRecording.playerId && data?.players) {
         for (const [id, p] of Object.entries(data.players)) {
@@ -233,14 +364,12 @@ async function handlePageMessage(payload, senderTabId) {
       }
       if (currentGameRecording.playerId) {
         botPlayerId = currentGameRecording.playerId;
+        if (session) session.recording.playerId = currentGameRecording.playerId;
       }
       currentGameRecording.states.push({ state: data, timestamp: Date.now() });
       if (data.winners && data.winners.length > 0) await finalizeRecording(data.winners, data);
     }
     if (shouldAct) {
-      // Self-play: skip states from wrong perspective tabs to avoid using
-      // opponent-perspective state where hand card UUIDs are missing.
-      // Determine active player dynamically from the incoming state.
       const activeId = getActivePlayerId(data) || currentGameRecording?.playerId;
       if (autoPlay && senderTabId && activeId && playerTabMap[activeId] && playerTabMap[activeId] !== senderTabId) {
         console.log('handlePageMessage: skipping GAMESTATE from wrong perspective tab', { senderTabId, activeId });
@@ -263,7 +392,13 @@ async function handlePageMessage(payload, senderTabId) {
     if (!eventData) return;
     // If it has players, treat as direct gamestate update
     if (eventData.players) {
-      if (!currentGameRecording) startNewRecording(eventData);
+      if (!currentGameRecording) {
+        if (eventData?.id) {
+          session = createGameSession(eventData.id, eventData);
+          session.tabIds.add(senderTabId);
+          activateSession(session);
+        }
+      }
       if (currentGameRecording) {
         if (!currentGameRecording.playerId && eventData?.players) {
           for (const [id, p] of Object.entries(eventData.players)) {
@@ -276,6 +411,7 @@ async function handlePageMessage(payload, senderTabId) {
         }
         if (currentGameRecording.playerId) {
           botPlayerId = currentGameRecording.playerId;
+          if (session) session.recording.playerId = currentGameRecording.playerId;
         }
         currentGameRecording.states.push({ state: eventData, timestamp: Date.now() });
         if (eventData.winners && eventData.winners.length > 0) await finalizeRecording(eventData.winners, eventData);
@@ -290,13 +426,12 @@ async function handlePageMessage(payload, senderTabId) {
       }
       return;
     }
-    // Check for popup events that have prompt/button data without full players wrapper
+    // Handle pre-game match acceptance / popup events
     const actionableButtons = Array.isArray(eventData.buttons) ? eventData.buttons :
                                Array.isArray(eventData.options) ? eventData.options :
                                Array.isArray(eventData.choices) ? eventData.choices :
                                Array.isArray(eventData.actions) ? eventData.actions : null;
     const hasActionableData = eventData.promptType !== undefined || (actionableButtons && actionableButtons.length > 0);
-    // Also check for object-type options (key-value pairs like {deploy: "Deploy Sabine Wren", ...})
     const objectOptions = !actionableButtons && typeof eventData.options === 'object' && eventData.options !== null;
     const objectChoices = !actionableButtons && typeof eventData.choices === 'object' && eventData.choices !== null;
     if ((hasActionableData || objectOptions || objectChoices) && currentGameRecording) {
@@ -305,7 +440,6 @@ async function handlePageMessage(payload, senderTabId) {
         const activeId = Object.keys(lastState.players).find(id => lastState.players[id]?.promptState?.promptType != null)
                        || Object.keys(lastState.players)[0];
         if (activeId) {
-          // Convert object options to button array
           let buttons = actionableButtons || [];
           if (buttons.length === 0 && objectOptions) {
             for (const [k, v] of Object.entries(eventData.options)) {
@@ -341,42 +475,35 @@ async function handlePageMessage(payload, senderTabId) {
   }
 }
 
-let lastFinalizedGameId = null;
-
-function startNewRecording(data) {
-  if (data?.id && data.id === lastFinalizedGameId) return;
-  gameCount++;
-  currentGameRecording = {
-    gameId: `game_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    timestamp: Date.now(),
-    gameNumber: gameCount,
-    playerId: null,
-    states: [],
-    actions: [],
-    winner: null,
-    trained: false,
-    initialState: data || null
-  };
-}
+// startNewRecording replaced by createGameSession + gameSessions map.
 
 async function finalizeRecording(winners, data) {
   if (!currentGameRecording) return;
+
+  // Find the session for this recording
+  const serverGameId = data?.id;
+  let session = serverGameId ? (gameSessions.get(serverGameId) || null) : null;
+  // Fall back to searching sessions by recording reference
+  if (!session) {
+    for (const [gid, s] of gameSessions) {
+      if (s.recording === currentGameRecording) {
+        session = s;
+        break;
+      }
+    }
+  }
+
   currentGameRecording.winner = winners;
   currentGameRecording.completedAt = Date.now();
   const recording = currentGameRecording;
   await saveGameRecording(recording);
   syncToServer('api/games', recording).catch(() => {});
-  if (data?.id) lastFinalizedGameId = data.id;
-  currentGameRecording = null;
-  currentTurnPlan = null;
-  failedActionKeys.clear();
-  lastSentActionKey = {};
-  lastSentStateHash = {};
-  pendingAutoPlayPlayers.clear();
-  pendingAutoPlay = false;
-  botPlayerId = null;
-  currentPlayerId = null;
-  playerTabMap = {};
+
+  // Clean up session state for this specific game only
+  const requeueTabIds = session ? [...session.tabIds] : [];
+  if (serverGameId) {
+    cleanupSession(serverGameId);
+  }
 
   // Auto-train before requeue
   if (autoTrain) {
@@ -384,16 +511,17 @@ async function finalizeRecording(winners, data) {
     await trainOnGame(recording);
   }
 
-  // Auto-requeue: wait for the "Game ended" DOM to render, then click Requeue
-  if (autoRequeue && lastTabId) {
-    setTimeout(async () => {
-      try {
-        const rqTabId = getBotTabId();
-        if (rqTabId) await chrome.tabs.sendMessage(rqTabId, { type: 'CLICK_REQUEUE' });
-      } catch (e) {
-        console.warn('Auto-requeue send failed:', e);
-      }
-    }, 2000);
+  // Auto-requeue: send to all tabs in this game, not lastTabId
+  if (autoRequeue) {
+    for (const tabId of requeueTabIds) {
+      setTimeout(async () => {
+        try {
+          if (tabId) await chrome.tabs.sendMessage(tabId, { type: 'CLICK_REQUEUE' });
+        } catch (e) {
+          console.warn('Auto-requeue send failed for tab', tabId, e);
+        }
+      }, 2000);
+    }
   }
 }
 
@@ -1035,16 +1163,10 @@ async function sendRecommendations(recording) {
         console.log('autoPlay: selectAiAction returned', autoAction ? getActionKey(autoAction) : 'null');
         if (autoAction) {
           let delay = minWait + Math.random() * (maxWait - minWait);
-          // No delay in self-play (bot vs bot, multiple tabs mapped)
-          const isSelfPlay = autoPlay && Object.keys(playerTabMap).length >= 2;
-          if (isSelfPlay) {
-            delay = 0;
-          } else {
-            if (actions.length <= 2) {
-              delay /= 2;
-            }
-            delay = Math.max(delay, 1000);
+          if (actions.length <= 2) {
+            delay /= 2;
           }
+          delay = Math.max(delay, 1000);
           const desc = describeAction(autoAction, latestState);
           if (delay > 0) {
             if (lastTabId) {
@@ -1114,6 +1236,8 @@ async function sendRecommendations(recording) {
     if (fallbackTabId) chrome.tabs.sendMessage(fallbackTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: actions.slice(0, 5).map(a => ({ description: describeAction(a, latestState), score: 0.5, action: a })) }).catch(() => {});
   } catch (e) {
     console.error('sendRecommendations failed:', e);
+  } finally {
+    syncSessionGlobals();
   }
 }
 
