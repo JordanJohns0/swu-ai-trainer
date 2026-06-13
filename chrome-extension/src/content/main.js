@@ -8,6 +8,7 @@ if (!window.__swuAiPatched) {
   window.__swuAiLastSend = null;
 
   var gameSocket = null;
+  var gameUserId = null;
   var OrigWebSocket = window.WebSocket;
 
   window.WebSocket = function(url, protocols) {
@@ -16,6 +17,17 @@ if (!window.__swuAiPatched) {
     window.__swuAiConnections.push({ url: String(url).slice(0, 120), isGame: isGame, ts: Date.now() });
 
     if (isGame) {
+      // Extract user ID from WebSocket URL query parameter
+      try {
+        var qs = (url || '').split('?')[1] || '';
+        var params = new URLSearchParams(qs);
+        var userParam = params.get('user');
+        if (userParam) {
+          var userData = JSON.parse(userParam);
+          gameUserId = userData.id || null;
+        }
+      } catch(e) {}
+
       window.__swuAiGameSocket = true;
       gameSocket = ws;
       var origSend = ws.send.bind(ws);
@@ -45,9 +57,9 @@ if (!window.__swuAiPatched) {
           var name = parsed[0], payload = parsed[1];
           window.__swuAiLastEvent = { name: name, ts: Date.now() };
           if (name === 'gamestate' || name === 'lobbystate') {
-            window.postMessage({ source: 'swu-ai-inject', payload: { type: name === 'gamestate' ? 'GAMESTATE' : 'LOBBYSTATE', data: payload } }, '*');
+            window.postMessage({ source: 'swu-ai-inject', payload: { type: name === 'gamestate' ? 'GAMESTATE' : 'LOBBYSTATE', data: payload, tabPlayerId: gameUserId } }, '*');
           } else if (name) {
-            window.postMessage({ source: 'swu-ai-inject', payload: { type: 'GAME_EVENT', name: name, data: payload } }, '*');
+            window.postMessage({ source: 'swu-ai-inject', payload: { type: 'GAME_EVENT', name: name, data: payload, tabPlayerId: gameUserId } }, '*');
           }
         }
       });

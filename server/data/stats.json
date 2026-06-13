@@ -1,0 +1,340 @@
+{
+  "id": "main",
+  "gamesTrained": 39,
+  "lastTrainedAt": 1781371191038,
+  "accuracy": 0.9166666666666666,
+  "examples": 12887,
+  "updatedAt": 1781371191572,
+  "accuracyHistory": [
+    {
+      "accuracy": 0.9047619047619048,
+      "gamesTrained": 3,
+      "at": 1781270974079
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 4,
+      "at": 1781271083570
+    },
+    {
+      "accuracy": 0.9126984126984127,
+      "gamesTrained": 6,
+      "at": 1781325648201
+    },
+    {
+      "accuracy": 0.9126984126984127,
+      "gamesTrained": 6,
+      "at": 1781325648345
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 7,
+      "at": 1781364845527
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 8,
+      "at": 1781364845568
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 10,
+      "at": 1781364949772
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 10,
+      "at": 1781364949778
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 12,
+      "at": 1781365860322
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 12,
+      "at": 1781365860332
+    },
+    {
+      "accuracy": 0.875,
+      "gamesTrained": 14,
+      "at": 1781366830986
+    },
+    {
+      "accuracy": 0.875,
+      "gamesTrained": 14,
+      "at": 1781366830990
+    },
+    {
+      "accuracy": 0.8461538461538461,
+      "gamesTrained": 16,
+      "at": 1781368106522
+    },
+    {
+      "accuracy": 0.8461538461538461,
+      "gamesTrained": 16,
+      "at": 1781368106563
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 17,
+      "at": 1781368107837
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 19,
+      "at": 1781368752435
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 20,
+      "at": 1781368752447
+    },
+    {
+      "accuracy": 1,
+      "gamesTrained": 20,
+      "at": 1781368752484
+    },
+    {
+      "accuracy": 0.8507462686567164,
+      "gamesTrained": 23,
+      "at": 1781369520414
+    },
+    {
+      "accuracy": 0.8507462686567164,
+      "gamesTrained": 23,
+      "at": 1781369520415
+    },
+    {
+      "accuracy": 0.8507462686567164,
+      "gamesTrained": 23,
+      "at": 1781369520645
+    },
+    {
+      "accuracy": 0.9390243902439024,
+      "gamesTrained": 25,
+      "at": 1781370154535
+    },
+    {
+      "accuracy": 0.9390243902439024,
+      "gamesTrained": 25,
+      "at": 1781370154674
+    },
+    {
+      "accuracy": 0.9390243902439024,
+      "gamesTrained": 25,
+      "at": 1781370154713
+    },
+    {
+      "accuracy": 0.9390243902439024,
+      "gamesTrained": 25,
+      "at": 1781370154789
+    },
+    {
+      "accuracy": 0.9846153846153847,
+      "gamesTrained": 28,
+      "at": 1781370171971
+    },
+    {
+      "accuracy": 0.9846153846153847,
+      "gamesTrained": 28,
+      "at": 1781370172102
+    },
+    {
+      "accuracy": 0.9846153846153847,
+      "gamesTrained": 28,
+      "at": 1781370172158
+    },
+    {
+      "accuracy": 0.9754098360655737,
+      "gamesTrained": 30,
+      "at": 1781370206281
+    },
+    {
+      "accuracy": 0.9754098360655737,
+      "gamesTrained": 30,
+      "at": 1781370206326
+    },
+    {
+      "accuracy": 0.9754098360655737,
+      "gamesTrained": 30,
+      "at": 1781370206402
+    },
+    {
+      "accuracy": 0.9754098360655737,
+      "gamesTrained": 30,
+      "at": 1781370206440
+    },
+    {
+      "accuracy": 0.9733333333333334,
+      "gamesTrained": 33,
+      "at": 1781370233479
+    },
+    {
+      "accuracy": 0.9733333333333334,
+      "gamesTrained": 33,
+      "at": 1781370233538
+    },
+    {
+      "accuracy": 0.9733333333333334,
+      "gamesTrained": 34,
+      "at": 1781370233704
+    },
+    {
+      "accuracy": 0.9733333333333334,
+      "gamesTrained": 34,
+      "at": 1781370233727
+    },
+    {
+      "accuracy": 0.9733333333333334,
+      "gamesTrained": 34,
+      "at": 1781370233771
+    },
+    {
+      "accuracy": 0.5230769230769231,
+      "gamesTrained": 36,
+      "at": 1781370399290
+    },
+    {
+      "accuracy": 0.5230769230769231,
+      "gamesTrained": 37,
+      "at": 1781370399615
+    },
+    {
+      "accuracy": 0.5230769230769231,
+      "gamesTrained": 37,
+      "at": 1781370399882
+    },
+    {
+      "accuracy": 0.5230769230769231,
+      "gamesTrained": 37,
+      "at": 1781370400127
+    },
+    {
+      "accuracy": 0.8760683760683761,
+      "gamesTrained": 18,
+      "at": 1781370618435
+    },
+    {
+      "accuracy": 0.8273381294964028,
+      "gamesTrained": 20,
+      "at": 1781370683052
+    },
+    {
+      "accuracy": 0.8273381294964028,
+      "gamesTrained": 21,
+      "at": 1781370683359
+    },
+    {
+      "accuracy": 0.8273381294964028,
+      "gamesTrained": 21,
+      "at": 1781370683363
+    },
+    {
+      "accuracy": 0.8273381294964028,
+      "gamesTrained": 21,
+      "at": 1781370683498
+    },
+    {
+      "accuracy": 0.8823529411764706,
+      "gamesTrained": 23,
+      "at": 1781370836009
+    },
+    {
+      "accuracy": 0.8823529411764706,
+      "gamesTrained": 23,
+      "at": 1781370836134
+    },
+    {
+      "accuracy": 0.8556701030927835,
+      "gamesTrained": 25,
+      "at": 1781370877372
+    },
+    {
+      "accuracy": 0.8556701030927835,
+      "gamesTrained": 25,
+      "at": 1781370877555
+    },
+    {
+      "accuracy": 0.9,
+      "gamesTrained": 28,
+      "at": 1781370908764
+    },
+    {
+      "accuracy": 0.9,
+      "gamesTrained": 29,
+      "at": 1781370908939
+    },
+    {
+      "accuracy": 0.9,
+      "gamesTrained": 29,
+      "at": 1781370908970
+    },
+    {
+      "accuracy": 0.9,
+      "gamesTrained": 29,
+      "at": 1781370909098
+    },
+    {
+      "accuracy": 0.8311688311688312,
+      "gamesTrained": 32,
+      "at": 1781370935851
+    },
+    {
+      "accuracy": 0.8311688311688312,
+      "gamesTrained": 32,
+      "at": 1781370936027
+    },
+    {
+      "accuracy": 0.8311688311688312,
+      "gamesTrained": 32,
+      "at": 1781370936167
+    },
+    {
+      "accuracy": 0.8613861386138614,
+      "gamesTrained": 35,
+      "at": 1781370976341
+    },
+    {
+      "accuracy": 0.8613861386138614,
+      "gamesTrained": 35,
+      "at": 1781370976450
+    },
+    {
+      "accuracy": 0.8613861386138614,
+      "gamesTrained": 35,
+      "at": 1781370976665
+    },
+    {
+      "accuracy": 0.8613861386138614,
+      "gamesTrained": 35,
+      "at": 1781370976739
+    },
+    {
+      "accuracy": 0.9487179487179487,
+      "gamesTrained": 37,
+      "at": 1781371004711
+    },
+    {
+      "accuracy": 0.9487179487179487,
+      "gamesTrained": 37,
+      "at": 1781371004822
+    },
+    {
+      "accuracy": 0.9166666666666666,
+      "gamesTrained": 39,
+      "at": 1781371191170
+    },
+    {
+      "accuracy": 0.9166666666666666,
+      "gamesTrained": 39,
+      "at": 1781371191521
+    },
+    {
+      "accuracy": 0.9166666666666666,
+      "gamesTrained": 39,
+      "at": 1781371191572
+    }
+  ]
+}

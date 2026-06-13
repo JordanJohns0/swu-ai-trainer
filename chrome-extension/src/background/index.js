@@ -10,14 +10,18 @@ let autoRequeue = false;
 let autoTrain = false;
 let autoPlay = false;
 let pendingAutoPlay = false;
+let pendingAutoPlayPlayers = new Set();
 let minWait = 1000;
 let maxWait = 3000;
 let pendingRecommendations = null;
 let lastUnknownEvent = null;
 let lastTabId = null;
+let botPlayerId = null;
+let currentPlayerId = null;
+let playerTabMap = {};
 let failedActionKeys = new Set();
-let lastSentActionKey = null;
-let lastSentStateHash = null;
+let lastSentActionKey = {};
+let lastSentStateHash = {};
 let currentTurnPlan = null;
 
 function getActionKey(action) {
@@ -49,10 +53,15 @@ getSetting('autoTrain', false).then(v => autoTrain = v).catch(() => {});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.tab?.id) lastTabId = sender.tab.id;
+  // Map sender tab to player ID (sent from content script)
+  if (sender.tab?.id && msg.tabPlayerId) {
+    playerTabMap[msg.tabPlayerId] = sender.tab.id;
+    console.log('playerTabMap:', msg.tabPlayerId, '→ tab', sender.tab.id);
+  }
   (async () => {
     try {
       if (msg.type === 'FROM_PAGE') {
-        await handlePageMessage(msg.payload);
+        await handlePageMessage(msg.payload, sender.tab?.id);
         sendResponse({ ok: true });
         return;
       }
@@ -197,7 +206,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
-async function handlePageMessage(payload) {
+async function handlePageMessage(payload, senderTabId) {
   const { type, data, event, args } = payload;
 
   const shouldAct = (isAiPlaying || autoPlay) && currentGameRecording;
@@ -222,11 +231,22 @@ async function handlePageMessage(payload) {
           }
         }
       }
+      if (currentGameRecording.playerId) {
+        botPlayerId = currentGameRecording.playerId;
+      }
       currentGameRecording.states.push({ state: data, timestamp: Date.now() });
       if (data.winners && data.winners.length > 0) await finalizeRecording(data.winners, data);
     }
     if (shouldAct) {
-      await sendRecommendations(currentGameRecording);
+      // Self-play: skip states from wrong perspective tabs to avoid using
+      // opponent-perspective state where hand card UUIDs are missing.
+      // Determine active player dynamically from the incoming state.
+      const activeId = getActivePlayerId(data) || currentGameRecording?.playerId;
+      if (autoPlay && senderTabId && activeId && playerTabMap[activeId] && playerTabMap[activeId] !== senderTabId) {
+        console.log('handlePageMessage: skipping GAMESTATE from wrong perspective tab', { senderTabId, activeId });
+      } else {
+        await sendRecommendations(currentGameRecording);
+      }
     }
   }
 
@@ -254,11 +274,19 @@ async function handlePageMessage(payload) {
             }
           }
         }
+        if (currentGameRecording.playerId) {
+          botPlayerId = currentGameRecording.playerId;
+        }
         currentGameRecording.states.push({ state: eventData, timestamp: Date.now() });
         if (eventData.winners && eventData.winners.length > 0) await finalizeRecording(eventData.winners, eventData);
       }
       if (shouldAct) {
-        await sendRecommendations(currentGameRecording);
+        const activeId = getActivePlayerId(eventData) || currentGameRecording?.playerId;
+        if (autoPlay && senderTabId && activeId && playerTabMap[activeId] && playerTabMap[activeId] !== senderTabId) {
+          console.log('handlePageMessage: skipping GAME_EVENT(players) from wrong perspective tab');
+        } else {
+          await sendRecommendations(currentGameRecording);
+        }
       }
       return;
     }
@@ -342,8 +370,13 @@ async function finalizeRecording(winners, data) {
   currentGameRecording = null;
   currentTurnPlan = null;
   failedActionKeys.clear();
-  lastSentActionKey = null;
-  lastSentStateHash = null;
+  lastSentActionKey = {};
+  lastSentStateHash = {};
+  pendingAutoPlayPlayers.clear();
+  pendingAutoPlay = false;
+  botPlayerId = null;
+  currentPlayerId = null;
+  playerTabMap = {};
 
   // Auto-train before requeue
   if (autoTrain) {
@@ -355,7 +388,8 @@ async function finalizeRecording(winners, data) {
   if (autoRequeue && lastTabId) {
     setTimeout(async () => {
       try {
-        await chrome.tabs.sendMessage(lastTabId, { type: 'CLICK_REQUEUE' });
+        const rqTabId = getBotTabId();
+        if (rqTabId) await chrome.tabs.sendMessage(rqTabId, { type: 'CLICK_REQUEUE' });
       } catch (e) {
         console.warn('Auto-requeue send failed:', e);
       }
@@ -363,13 +397,28 @@ async function finalizeRecording(winners, data) {
   }
 }
 
-async function sendActionToTab(action) {
-  const tabId = lastTabId;
-  if (!tabId) { console.warn('sendActionToTab: no tab ID available'); return; }
+function getBotTabId(overridePlayerId) {
+  const pid = overridePlayerId || currentPlayerId || botPlayerId;
+  const mapped = (pid && playerTabMap[pid]) ? playerTabMap[pid] : null;
+  const result = mapped || lastTabId;
+  if (mapped) console.log('getBotTabId: mapped', pid, '→ tab', mapped);
+  return result;
+}
+
+async function sendActionToTab(action, overridePlayerId) {
+  const targetId = overridePlayerId ? getBotTabId(overridePlayerId) : getBotTabId();
+  if (!targetId) { console.warn('sendActionToTab: no tab ID available'); return; }
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'INJECT_AND_EXECUTE', action });
+    await chrome.tabs.sendMessage(targetId, { type: 'INJECT_AND_EXECUTE', action });
   } catch (e) {
-    console.warn('sendActionToTab failed:', e);
+    console.warn('sendActionToTab failed to', targetId, '- falling back to lastTabId');
+    if (targetId !== lastTabId) {
+      try {
+        await chrome.tabs.sendMessage(lastTabId, { type: 'INJECT_AND_EXECUTE', action });
+      } catch (e2) {
+        console.warn('sendActionToTab fallback also failed:', e2);
+      }
+    }
   }
 }
 
@@ -396,6 +445,15 @@ async function selectAiAction(recording) {
     }
     console.log('selectAiAction: no sequence or resource action, falling through to model', { actionsCount: actions.length });
     if (actions.length === 0) return null;
+
+    // Never choose Cancel or Close if any other option exists
+    const nonCancelActions = actions.filter(a => !isCancelAction(a));
+    if (nonCancelActions.length > 0) {
+      if (nonCancelActions.length !== actions.length) {
+        console.log('selectAiAction: filtered Cancel actions', { total: actions.length, afterFilter: nonCancelActions.length });
+      }
+      actions = nonCancelActions;
+    }
 
     // Try plan-based selection first (only during action/resource phases)
     const planPhase = detectPhase(latestState);
@@ -431,6 +489,17 @@ async function selectAiAction(recording) {
     const actionFeatures = encodeActions(actions);
     const chosen = selectBestAction(model, stateTensor, actionFeatures, actions);
     console.log('selectAiAction: model chose', getActionKey(chosen), chosen ? describeAction(chosen, latestState) : '');
+    if (chosen && isCancelAction(chosen)) {
+      const alternatives = actions.filter(a => !isCancelAction(a));
+      if (alternatives.length > 0) {
+        console.log('selectAiAction: model chose Cancel, picking alternative');
+        const cardClicks = alternatives.filter(a => a.type === 'cardClicked');
+        if (cardClicks.length > 0) return cardClicks[Math.floor(Math.random() * cardClicks.length)];
+        const claimBtn = alternatives.find(a => a.type === 'menuButton' && (String(a.arg ?? '').toLowerCase().includes('claim') || String(a.command ?? '').toLowerCase().includes('claim')));
+        if (claimBtn) return claimBtn;
+        return alternatives[Math.floor(Math.random() * alternatives.length)];
+      }
+    }
     if (chosen && chosen.type === 'menuButton' && (chosen.arg === 'pass' || chosen.command === 'pass')) {
       const alternatives = actions.filter(a => {
         if (a.type !== 'menuButton') return true;
@@ -807,17 +876,27 @@ async function sendRecommendations(recording) {
     if (!latestState) return;
     console.log('sendRecommendations called V4', { autoPlay, isAiPlaying, pendingAutoPlay, statesLen: recording.states.length, stateId: latestState.id });
 
+    // Guard: if botPlayerId is set and it's not the bot's turn, skip entirely
+    // Prevents stale state from wrong tab causing false failure detection
+    if (botPlayerId && latestState?.players) {
+      const myPlayer = getMyPlayerState(latestState);
+      if (!myPlayer) {
+        console.log('sendRecommendations: not our turn, skipping');
+        return;
+      }
+    }
+
     // Failed action detection: if state hash matches lastSentStateHash, action had no effect
-    if (lastSentActionKey && lastSentStateHash) {
+    if (currentPlayerId && lastSentStateHash[currentPlayerId] !== undefined) {
       const currentHash = getActionSetHash(latestState);
-      if (currentHash === lastSentStateHash) {
-        failedActionKeys.add(lastSentActionKey);
-        console.log('failedActionKeys added', lastSentActionKey);
+      if (currentHash === lastSentStateHash[currentPlayerId]) {
+        failedActionKeys.add(lastSentActionKey[currentPlayerId]);
+        console.log('failedActionKeys added', lastSentActionKey[currentPlayerId]);
       } else {
         failedActionKeys.clear();
       }
-      lastSentActionKey = null;
-      lastSentStateHash = null;
+      delete lastSentActionKey[currentPlayerId];
+      delete lastSentStateHash[currentPlayerId];
     }
 
     const allActions = getAvailableActions(latestState);
@@ -888,6 +967,13 @@ async function sendRecommendations(recording) {
       }
     }
 
+    // Never choose Cancel or Close if any other option exists
+    const cancelActions = actions.filter(a => isCancelAction(a));
+    if (cancelActions.length > 0 && cancelActions.length < actions.length) {
+      actions = actions.filter(a => !isCancelAction(a));
+      console.log('sendRecommendations: filtered Cancel actions', { total: actions.length, filteredCancel: cancelActions.length });
+    }
+
     // Auto-confirm resourcing
     const recPlayer = getMyPlayerState(latestState);
     const isResource = isResourcePhase(recPlayer, actions);
@@ -935,31 +1021,47 @@ async function sendRecommendations(recording) {
 
     // Auto-play: auto-execute the best action without overlay
     if (autoPlay) {
-      if (pendingAutoPlay) { console.log('autoPlay: pendingAutoPlay locked, skipping'); return; }
-      console.log('autoPlay: starting auto-play cycle');
+      // Per-player pending check: allow concurrent auto-play for different players
+      if (pendingAutoPlayPlayers.has(currentPlayerId)) {
+        console.log('autoPlay: pendingAutoPlay locked for', currentPlayerId, 'skipping');
+        return;
+      }
+      const apPlayerId = currentPlayerId;
+      console.log('autoPlay: starting auto-play cycle for', apPlayerId);
       pendingAutoPlay = true;
+      pendingAutoPlayPlayers.add(apPlayerId);
       try {
         const autoAction = await selectAiAction(recording);
         console.log('autoPlay: selectAiAction returned', autoAction ? getActionKey(autoAction) : 'null');
         if (autoAction) {
           let delay = minWait + Math.random() * (maxWait - minWait);
-          if (actions.length <= 2) {
-            delay /= 2;
+          // No delay in self-play (bot vs bot, multiple tabs mapped)
+          const isSelfPlay = autoPlay && Object.keys(playerTabMap).length >= 2;
+          if (isSelfPlay) {
+            delay = 0;
+          } else {
+            if (actions.length <= 2) {
+              delay /= 2;
+            }
+            delay = Math.max(delay, 1000);
           }
-          delay = Math.max(delay, 1000);
           const desc = describeAction(autoAction, latestState);
-          if (lastTabId) {
-            chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_COUNTDOWN', description: desc, totalMs: Math.round(delay) }).catch(() => {});
+          if (delay > 0) {
+            if (lastTabId) {
+              const cdTabId = getBotTabId(apPlayerId);
+              if (cdTabId) chrome.tabs.sendMessage(cdTabId, { type: 'SHOW_COUNTDOWN', description: desc, totalMs: Math.round(delay) }).catch(() => {});
+            }
+            await new Promise(r => setTimeout(r, delay));
           }
-          await new Promise(r => setTimeout(r, delay));
           // Capture state hash right before send, after delay, to avoid false-positive
           // failure detection from GAMESTATE events arriving during the wait.
-          lastSentStateHash = getActionSetHash(latestState);
-          lastSentActionKey = getActionKey(autoAction);
-          await sendActionToTab(autoAction);
+          lastSentStateHash[apPlayerId] = getActionSetHash(latestState);
+          lastSentActionKey[apPlayerId] = getActionKey(autoAction);
+          await sendActionToTab(autoAction, apPlayerId);
         }
       } finally {
-        pendingAutoPlay = false;
+        pendingAutoPlayPlayers.delete(apPlayerId);
+        if (pendingAutoPlayPlayers.size === 0) pendingAutoPlay = false;
       }
       return;
     }
@@ -969,7 +1071,8 @@ async function sendRecommendations(recording) {
     const mulliganBtn = actions.find(a => matchesMulliganAction(a, 'mulligan'));
     if (keepBtn && mulliganBtn) {
       pendingRecommendations = [keepBtn, mulliganBtn];
-      if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: [
+      const recTabId = getBotTabId();
+      if (recTabId) chrome.tabs.sendMessage(recTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: [
         { description: describeAction(keepBtn, latestState), score: 0.55, action: keepBtn },
         { description: describeAction(mulliganBtn, latestState), score: 0.45, action: mulliganBtn }
       ] }).catch(() => {});
@@ -992,20 +1095,23 @@ async function sendRecommendations(recording) {
             const altTop = selectTopActions(model, stateTensor, af, nonPass, 5);
             if (altTop.length > 0) {
               pendingRecommendations = altTop.map(t => t.action);
-              if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: altTop.map(t => ({ description: describeAction(t.action, latestState), score: t.score, action: t.action })) }).catch(() => {});
+              const altTabId = getBotTabId();
+              if (altTabId) chrome.tabs.sendMessage(altTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: altTop.map(t => ({ description: describeAction(t.action, latestState), score: t.score, action: t.action })) }).catch(() => {});
               return;
             }
           }
         }
         pendingRecommendations = top.map(t => t.action);
-        if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: top.map(t => ({ description: describeAction(t.action, latestState), score: t.score, action: t.action })) }).catch(() => {});
+        const topTabId = getBotTabId();
+        if (topTabId) chrome.tabs.sendMessage(topTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: top.map(t => ({ description: describeAction(t.action, latestState), score: t.score, action: t.action })) }).catch(() => {});
         return;
       }
     }
 
     // Fallback: show available actions without model scoring
     pendingRecommendations = actions.slice(0, 5);
-    if (lastTabId) chrome.tabs.sendMessage(lastTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: actions.slice(0, 5).map(a => ({ description: describeAction(a, latestState), score: 0.5, action: a })) }).catch(() => {});
+    const fallbackTabId = getBotTabId();
+    if (fallbackTabId) chrome.tabs.sendMessage(fallbackTabId, { type: 'SHOW_RECOMMENDATIONS', recommendations: actions.slice(0, 5).map(a => ({ description: describeAction(a, latestState), score: 0.5, action: a })) }).catch(() => {});
   } catch (e) {
     console.error('sendRecommendations failed:', e);
   }
@@ -1075,6 +1181,10 @@ function matchesMulliganAction(a, keyword) {
          String(a.text ?? '').toLowerCase().includes(keyword);
 }
 
+function isCancelAction(a) {
+  return matchesMulliganAction(a, 'cancel') || matchesMulliganAction(a, 'close');
+}
+
 async function trySequences(state) {
   const actions = getAvailableActions(state).filter(a => !failedActionKeys.has(getActionKey(a)));
   if (actions.length === 0) return null;
@@ -1141,10 +1251,9 @@ async function trySequences(state) {
         const menuBtns = actions.filter(a => a.type === 'menuButton');
 
         // Dedra Meero + Colossus: always pass initiative
-        const botId = currentGameRecording?.playerId;
-        if (botId && state.players[botId]) {
-          const leaderName = getCardName(state.players[botId].leader);
-          const baseName = getCardName(state.players[botId].base);
+        if (state.players[activeId]) {
+          const leaderName = getCardName(state.players[activeId].leader);
+          const baseName = getCardName(state.players[activeId].base);
           if (leaderName && leaderName.includes('Dedra Meero') && baseName && baseName.includes('Colossus')) {
             const goSecond = menuBtns.find(a => matchesMulliganAction(a, 'pass') || String(a.arg ?? '').includes('pass'));
             if (goSecond) { console.log('initiative: Dedra+Colossus, giving opponent first', { arg: goSecond.arg, text: goSecond.text }); return goSecond; }
@@ -1185,12 +1294,74 @@ function getAvailableActions(gameState) {
   return actions;
 }
 
+function getActivePlayerId(gameState) {
+  if (!gameState?.players) return null;
+  const pids = Object.keys(gameState.players);
+  for (const id of pids) {
+    const ps = gameState.players[id].promptState;
+    if (ps && ps.promptType != null && ps.promptType !== '' && ps.promptType !== false) return id;
+  }
+  for (const id of pids) {
+    const ps = gameState.players[id].promptState;
+    if (ps && ps.selectCardMode && ps.selectCardMode !== 'none') return id;
+  }
+  for (const id of pids) {
+    const ps = gameState.players[id].promptState;
+    if (ps && ps.buttons && ps.buttons.length > 0) return id;
+  }
+  return null;
+}
+
 function getMyPlayerState(gameState) {
   if (!gameState || !gameState.players) { console.log('getMyPlayerState: no gameState/players'); return null; }
   const playerIds = Object.keys(gameState.players);
+  let foundId = null;
+  // When autoPlay is on for self-play, check ANY player with a prompt (not just botPlayerId)
+  if (autoPlay) {
+    for (const id of playerIds) {
+      const ps = gameState.players[id].promptState;
+      if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
+        foundId = id; break;
+      }
+    }
+    if (!foundId) {
+      for (const id of playerIds) {
+        const ps = gameState.players[id].promptState;
+        if (ps && ps.selectCardMode && ps.selectCardMode !== 'none') { foundId = id; break; }
+      }
+    }
+    if (!foundId) {
+      for (const id of playerIds) {
+        const ps = gameState.players[id].promptState;
+        if (ps && ps.buttons && ps.buttons.length > 0) { foundId = id; break; }
+      }
+    }
+    if (foundId) {
+      if (!botPlayerId) botPlayerId = foundId;
+      currentPlayerId = foundId;
+      console.log('getMyPlayerState: found active player', foundId);
+      return gameState.players[foundId];
+    }
+    console.log('getMyPlayerState: no player found, playerIds:', playerIds, 'states:', playerIds.map(id => ({ id, promptState: gameState.players[id]?.promptState ? Object.keys(gameState.players[id].promptState) : 'no prompt' })));
+    return null;
+  }
+  // Single-player mode: only check the detected bot player
+  if (botPlayerId) {
+    if (playerIds.includes(botPlayerId)) {
+      const ps = gameState.players[botPlayerId].promptState;
+      if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
+        currentPlayerId = botPlayerId;
+        console.log('getMyPlayerState: found bot player via promptType', botPlayerId, ps.promptType);
+        return gameState.players[botPlayerId];
+      }
+    }
+    console.log('getMyPlayerState: bot player', botPlayerId, 'has no prompt, skipping');
+    return null;
+  }
   for (const id of playerIds) {
     const ps = gameState.players[id].promptState;
     if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
+      currentPlayerId = id;
       console.log('getMyPlayerState: found via promptType', id, ps.promptType);
       return gameState.players[id];
     }
@@ -1198,6 +1369,7 @@ function getMyPlayerState(gameState) {
   for (const id of playerIds) {
     const ps = gameState.players[id].promptState;
     if (ps && ps.selectCardMode && ps.selectCardMode !== 'none') {
+      currentPlayerId = id;
       console.log('getMyPlayerState: found via selectCardMode', id, ps.selectCardMode);
       return gameState.players[id];
     }
@@ -1205,6 +1377,7 @@ function getMyPlayerState(gameState) {
   for (const id of playerIds) {
     const ps = gameState.players[id].promptState;
     if (ps && ps.buttons && ps.buttons.length > 0) {
+      currentPlayerId = id;
       console.log('getMyPlayerState: found via buttons', id, 'buttonCount:', ps.buttons.length);
       return gameState.players[id];
     }

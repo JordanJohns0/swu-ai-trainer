@@ -8,7 +8,7 @@ window.addEventListener('message', (event) => {
   if (p.type === 'DIAG_RESULT') {
     bgSend({ type: 'DIAG_RESULT', data: p.data });
   } else {
-    bgSend({ type: 'FROM_PAGE', payload: p });
+    bgSend({ type: 'FROM_PAGE', payload: p, tabPlayerId: p.tabPlayerId });
   }
 });
 
