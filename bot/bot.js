@@ -1,7 +1,7 @@
 const http = require('http');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
-const { selectAiAction, getActionKey } = require('./util');
+const { selectAiAction, getActionKey, getActionSetHash } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
@@ -114,6 +114,7 @@ async function runBot(id, name) {
   let recording = null;
   let pendingRequeue = false;
   let firstConnect = true;
+  let lastStateHash = null;
   socket.on('connect', () => {
     console.log(`${name} connected: ${socket.id}`);
     if (!firstConnect && !gameId) {
@@ -130,6 +131,7 @@ async function runBot(id, name) {
     if (sid && sid !== gameId && !pendingRequeue) {
       gameId = sid;
       pendingRequeue = false;
+      lastStateHash = null;
       recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
     }
@@ -157,6 +159,13 @@ async function runBot(id, name) {
       }, 3000);
       return;
     }
+
+    // Skip if state hasn't changed since our last action (prevents infinite loops)
+    const currentHash = getActionSetHash(data);
+    if (currentHash === lastStateHash) {
+      return;
+    }
+    lastStateHash = currentHash;
 
     const action = await selectAiAction(data, SELF_PLAY_MODE);
     if (!action) { console.log(`${name} no action`); return; }
