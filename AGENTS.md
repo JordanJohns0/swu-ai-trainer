@@ -1,102 +1,66 @@
 # SWU AI Trainer — Project Summary
 
 ## Goal
-Train a neural network AI for Star Wars: Unlimited on Karabast that learns from recorded games, can play autonomously with structured turn planning, and persists data to a local server with a browser dashboard.
+Support running 5 bots that queue into Forceteki and play multiple concurrent games without cross-game state corruption; make bots handle all prompt types (indirect damage, choose option from list) using the neural net.
 
 ## Constraints & Preferences
-- Web extension populates `index.html` UI from `status` object (storage + model state).
-- Training uses ranking loss (hinge margin) on `(state, action)` score pairs — linear output, no sigmoid.
-- Wins: taken action should score ≥ non-taken + margin (1.0). Losses: taken should score ≤ non-taken + margin (0.3, weak signal). Unknown outcomes skipped.
-- Must track which player is the bot (`playerId` in recording) to determine win/loss outcome.
-- Multi-model inference UX: best action for auto-play, top-5 suggestions for user overlay, and a separate per-card action ranker for `choose-card` prompts.
-- TF.js is incompatible with MV3 extension service workers (Chrome blocks `'unsafe-eval'` in `extension_pages` CSP).
-- User explicitly does not want multi-process training; keep everything in a single ModelScope flow.
-- Turn planner should interleave bot actions with predicted opponent responses using initiative-based ordering, show in popup, and revise on each state change.
-- Model weights and game data should persist to a local Node.js server (port 3456) as JSON files, viewable via a browser dashboard.
+- Bots must be in separate Chrome profiles (not incognito) — incognito windows share cookies, cannot queue into each other
+- Multi-game session routing committed: `gameSessions` Map replaces all singletons
+- Training uses ranking loss (hinge margin) on `(state, action)` score pairs — linear output, no sigmoid
+- Bots use 1-3s delay (minWait-maxWait, halved for ≤2 actions, floored at 1000ms) regardless of opponent type
+- TF.js is incompatible with MV3 (CSP blocks `'unsafe-eval'`)
+- User explicitly does not want multi-process training; keep everything in a single ModelScope flow
+- Model weights and game data persist to local Node.js server (port 3456)
 
 ## Progress
 ### Done
-- **Multi-game session routing**: replaced all singleton game state (`currentGameRecording`, `botPlayerId`, `failedActionKeys`, `currentTurnPlan`, `lastFinalizedGameId`) with a `gameSessions` Map keyed by server game ID (`data.id`). `handlePageMessage` activates the correct session per message. LOBBYSTATE sessions use tab-ID fallback key for pre-game state, transferred to game-ID key on first GAMESTATE. `createGameSession`, `activateSession`, `cleanupSession`, `syncSessionGlobals` helpers manage lifecycle.
-- **Auto-requeue targets correct tab**: `finalizeRecording` stores tab IDs per session and sends CLICK_REQUEUE to all game tabs instead of relying on `lastTabId`.
-- **Removed self-play zero-delay**: bots now use normal delay logic (minWait-maxWait, halved for ≤2 actions, floored at 1000ms) regardless of opponent type.
-- Added `playerId` field to game recordings (`startNewRecording`) and lazy detection in `handlePageMessage` (GAMESTATE + GAME_EVENT with players).
-- Installed `@tensorflow/tfjs` v4.22.0 and rewrote `model.js` to use TF.js — reverted due to CSP `'unsafe-eval'` restriction in MV3.
-- Added NaN/overflow guards to hand-rolled `Layer` class: sigmoid input clamped to [-100, 100], `isFinite(sum)` checks in forward + backward, gradient clipping (dz to [-5,5], weight updates to [-10,10]).
-- Verified Forceteki and Forceteki-Client repos contain zero bot detection, anti-cheat, rate limiting, or behavior monitoring code.
-- **Replaced BCE sigmoid with ranking loss**: output layer changed to `linear`; added `Layer.backward()`, `Layer.applyGradients()`, `NeuralNet.trainRankingStep()` with per-state gradient accumulation and `topK` hard-negative mining param; added `trainModelRanking()` with hinge margin and adaptive LR/margin scheduling across epochs.
-- **Fixed `failedActionKeys` deadlock**: `selectAiAction`, `cardToResource`, `trySequences`, `sendRecommendations` now filter out `failedActionKeys` from action list. When all actions filtered, clears set and retries. Moved `lastSentStateHash` capture to after the delay to prevent false-positive failures.
-- **Added faster delay for ≤2 actions**: delay halved when `actions.length <= 2`, with a hard floor of 1000ms.
-- **Initiative logic**: default go-first; if leader is `Dedra Meero` AND base is `Colossus`, passes initiative instead.
-- **Added network visualization** to popup: 4-layer card showing Input(459) → Dense1(128,ReLU) → Dense2(64,ReLU) → Output(1,Linear) with size bars.
-- **Added "Train Model Now" confirmation dialog**: browser `confirm()` before `startTraining` via popup button.
-- **Hard negative mining + adaptive LR/margin**: `trainRankingStep` accepts `topK` (default 3) to only compare taken vs top-K highest-scoring non-taken. `trainModelRanking` now takes a params object with linear scheduling: `lr 0.003→0.001`, `marginWin 2.0→1.0`, `marginLoss 0.6→0.3`, `epochs 5`, `topK 3`. Post-game `trainOnGame` uses 3 epochs.
-- **Turn planner system**: generates plan with bot actions scored, categorized, and interleaved with opponent predictions (via `encodeGameStateForPlayer`). Revised on each state change. Plan displayed in popup with status icons and scores. Plan consulted by `selectAiAction` before model fallback.
-- **Added `encodeGameStateForPlayer(state, playerId)`** — encodes game state from any player's perspective for opponent action prediction.
-- **Fixed plan blocking trigger/confirmation prompts**: removed phase restriction in `sendRecommendations` plan generation; added phase check in `selectAiAction` to only consult plan during `'action'`/`'resource'` phases.
-- **Fixed `categorizeAction` crash**: changed `(action.arg || '').toLowerCase()` to `String(action.arg ?? '').toLowerCase()` — handles non-string `arg` values (e.g., number `0`).
-- **Fixed plan using wrong actions**: `generateTurnPlan` now uses `getActionsForPlayer(state, botId)` instead of `getAvailableActions(state)` (which mixed opponent actions into bot list). Added `getBotActionsHash()` for plan state hash. Updated `reviseTurnPlan`, `selectAiAction`, and `sendRecommendations` hash comparisons.
-- **Fixed variance collapse through ReLU layers**: added `outputScale` parameter to `Layer` class (default 1). Last layer uses `outputScale=5`. Forward applies `val *= outputScale`. Backward for linear uses `dz[o] = target[o] * this.outputScale`. `outputScale` persisted via `getWeights`/`setWeights`.
-- **Fixed identical scores display**: added per-action score dispersion `hashActionKey(key) * 0.02 - 0.01` (range ±0.01) to bot and opponent plan items. Added `hashActionKey()` helper.
-- **Added weight decay**: `trainRankingStep` passes `weightDecay = 0.01` to `applyGradients`. L2 penalty `weightDecay * this.w[i]` added to gradient.
-- **Amplified action features**: `encodeActions` multiplies all features by `ACTION_GAIN = 5` for both training and inference.
-- **Created local data server + dashboard**: Express server on port 3456 with REST API (`/api/health`, `/api/weights`, `/api/stats`, `/api/games`) storing data as JSON files. Dashboard SPA (`dashboard/index.html` + `dashboard.js`) with network visualization, accuracy chart (canvas), game browser with detail view, and export/clear controls. Server and dashboard auto-refresh every 30s.
-- **Created `start-local.ps1` / `start-local.bat`**: clone + install + launch Forceteki server (:9500), client (:3000), and data server (:3456).
-- **Extension auto-sync to server**: `syncToServer()` / `syncAllToServer()` in storage.js. Game recordings sync on `finalizeRecording`. Weights + stats sync after training. Dashboard button + editable server URL + Sync button in popup.
-- **Host permission**: added `http://localhost:3456/*` to manifest.json.
+- **Multi-game session routing** (committed): replaced all singleton per-game globals (`currentGameRecording`, `botPlayerId`, `failedActionKeys`, `currentTurnPlan`) with `Map<serverGameId, session>`. LOBBYSTATE uses `lobby_${tabId}` fallback, migrated on first GAMESTATE. `finalizeRecording` sends auto-requeue to all `session.tabIds`.
+- **Removed self-play zero-delay**, dead `startNewRecording()` removed, `.gitignore` added
+- All prior features: NaN guards, ranking loss, topK mining, outputScale, ACTION_GAIN, weight decay, turn planner, local server/dashboard, extension auto-sync
 
-### In Progress
-- (none — server sync layer is minimal but functional)
-
-### Blocked
-- (none)
+### Done
+- **`distributeAmongTargets` rewritten**: Instead of clicking individual cards (which did nothing for stateful prompts), the handler now reads `promptState.distributeAmongTargets`, scores target cards via NN, distributes damage/ healing proportionally by score, and submits via new `statefulPromptResults` action type. Falls back to old cardClicked behavior if promptData is not available.
+- **`main.js` supports 4 action types**: `cardClicked`, `menuButton`, `pass`, and `statefulPromptResults` — the latter sends `swuAiSend('game', 'statefulPromptResults', a.distribution, a.uuid)`.
+- **`getAvailableActions` extracts `dropdownListOptions`**: creates `menuButton` actions for each dropdown option in `promptState.dropdownListOptions` (used by `DropdownListPrompt` for "choose from list" prompts).
 
 ## Key Decisions
-- **Ranking loss over BCE**: sigmoid + BCE saturates at 0 when trained on mostly-loss data (all labels 0.0). Ranking loss compares taken vs non-taken directly, never saturates, and every state contributes signal regardless of game outcome.
-- **Loss games use weak margin (0.3 vs 1.0)**: avoids assuming every non-taken action was better — a game can be lost for reasons unrelated to a specific decision. Win games dominate the learning signal.
-- **Gradient accumulation per state**: all actions in a state are forward-scored on identical weights before any backward pass, then gradients are accumulated and applied once. Prevents later actions from training on shifted weights.
-- **Hard negative mining (topK=3)**: focuses gradient on the most confusing non-taken actions instead of diluting with obviously bad ones.
-- **Adaptive LR/margin scheduling**: early epochs aggressively separate scores, later epochs fine-tune. Post-game training goes from 1→3 epochs.
-- **Turn planning for structure, not lookahead**: plan organizes and displays bot actions with opponent predictions, but NN still scores actions independently per state. No game simulator available for state transition simulation.
-- **Plan consulted before model fallback in selectAiAction**: plan's `current` bot item takes priority. Only falls to model if plan has no valid current/pending item. Restricted to `'action'`/`'resource'` phases.
-- **failedActionKeys fallback**: when all actions are in the failed set, clear and retry. Catches stale / deadlocked states where no action can succeed until opponent or timer changes the state.
-- **Dedra Meero + Colossus passes initiative**: specific meta-call based on user strategy.
-- **outputScale=5 on last layer**: compensates for variance collapse through 3 ReLU layers. Properly handled in forward (output amplification) and backward (dz = target × scale) passes.
-- **ACTION_GAIN=5**: amplifies sparse action features to match state features' impact, preventing the network from ignoring action differences.
-- **Server persistence**: model weights, stats, and games stored as JSON files on disk via Express server, replacing IndexedDB for persistent storage (extension keeps IndexedDB as cache). Dashboard reads from server for visualization.
+- **Session key is server game ID (`data.id`)**: confirmed consistent across all game states
+- **5 Chrome profiles replace incognito**: separate profiles give each bot its own cookie jar and Forceteki account
+- **Prompt actions are `menuButton`, `cardClicked`, `pass`, or `statefulPromptResults`**: content script (`main.js`) sends `menuButton(arg, uuid)`, `cardClicked(cardId)`, or `statefulPromptResults(distribution, uuid)`
+- **`distributeAmongTargets` now submits `statefulPromptResults`**: reads prompt data (`type, amount, canDistributeLess, canChooseNoTargets, maxTargets`), scores targets via NN (cardClicked encoding), distributes proportionally by score, submits `{ type, valueDistribution: [{ uuid, amount }] }`. Done button command `statefulPromptResults` detected from prompt buttons.
+- **`getAvailableActions`**: now has four extraction passes — buttons, dropdownListOptions, perCardButtons+displayCards, getSelectableCardIds
+- **Card UUID format**: `card.uuid = 'Card' + '_' + id` (Forceteki 2.0, from `GameStateManager.ts:88`). Format is `Card_58`, `Card_194`, etc. This is the same format as what `getSelectableCardIds` returns.
 
 ## Next Steps
-- Test multi-game support: run 2+ simultaneous bot matches (bot vs bot) and confirm no state interference.
-- Add `botPlayerId` setting for user identification.
-
-## Blocked
-- (none)
+1. Test Boba Fett distribute ability: run bot in prod, verify it submits `statefulPromptResults` instead of card clicks
+2. Add `botPlayerId` setting for user identification in recordings
+3. Pick up multi-game testing with 5 Chrome profiles
 
 ## Critical Context
-- **Accuracy metric is preference accuracy**: `score[taken] >= max(score[non-taken])` for wins, `score[taken] <= min(score[non-taken])` for losses. Fraction of states where correct. Stored as decimal, displayed as `(value * 100).toFixed(1) + '%'`.
-- `trainModelRanking(model, games, params)` accepts object: `{ lrStart=0.003, lrEnd=0.001, marginWinStart=2.0, marginWinEnd=1.0, marginLossStart=0.6, marginLossEnd=0.3, epochs=5, topK=3 }`. Per-epoch scheduling via linear interpolation.
-- `trainRankingStep(..., topK=0, weightDecay=0.01)` — when `topK > 0 && actions.length > 2`, only computes gradient against top-K highest-scoring non-taken actions. Weight decay applies L2 penalty during gradient application.
-- Plan structure: `{ phase, round, stateHash, items: [{ action, description, score, source:'bot'|'opponent', status:'done'|'current'|'pending'|'predicted', category }], botId, oppId, generatedAt }`.
-- Plan generated by `generateTurnPlan(state)` (async, loads model), revised by `reviseTurnPlan(state, plan)` (sync, async model load for new actions). Plan broadcast to popup via `PLAN_UPDATE` message and `GET_STATUS` response.
-- Plan state hash uses `getBotActionsHash(state)` (bot-only actions via `getActionsForPlayer(state, botId)`) instead of `getActionSetHash` (all players).
-- Plan items include dispersion `hashActionKey(key) * 0.02 - 0.01` added to score to prevent identical display values.
-- **Multi-game sessions**: `gameSessions` Map keyed by server `data.id`. LOBBYSTATE with no game ID uses `lobby_${tabId}` key, transferred on first GAMESTATE. Functions access per-game state via globals set by `activateSession()` at the top of `handlePageMessage`. `syncSessionGlobals()` saves modified globals back. Two concurrent games (4 bots) are fully supported.
-- **Auto-requeue targets game tabs**: `session.tabIds` Set tracks all tabs in a game; `finalizeRecording` sends CLICK_REQUEUE to each.
-- `Layer` class `outputScale` is persisted in `getWeights()`/`setWeights()` for cross-session consistency.
-- Forceteki has zero bot-detection or anti-automation code — no rate limits, timing analysis, action pattern monitors, or TOS against bots.
-- Popup network visualization auto-renders via `renderNetwork()` on refresh. Layers hardcoded in `NETWORK_LAYERS` constant.
-- Local server running on port 3456 provides REST API and dashboard SPA at `http://localhost:3456/`.
-- Extension auto-syncs game recordings, weights, and stats to server on save/training. Sync is fire-and-forget (silent on failure).
-- Popup has "Open Dashboard" button, editable server URL, and "Sync" button to bulk-push all data to server.
+- **Incognito shares cookies**: all incognito tabs/windows from one Chrome profile share cookies. Cannot play against yourself. Need separate Chrome profiles (Settings → Profiles → Add profile) for each bot
+- **`getAvailableActions`** in `index.js:1527`: now has four extraction passes — buttons, dropdownListOptions, perCardButtons+displayCards, getSelectableCardIds
+- **`trySequences` distribute handler** in `index.js:1367`: reads `promptState.distributeAmongTargets`, scores targets via NN, submits `statefulPromptResults` with proportional distribution
+- **`getSelectableCardIds`** in `index.js:1643`: checks card piles + player leader/base + `promptState.displayCards` for selectable cards
+- **`sendRecommendations` fallback** in `index.js:1066`: scans `['buttons', 'options', 'choices', 'actions', 'menuItems', 'selections', 'prompts', 'triggers', 'items', 'entries', 'perCardButtons', 'players']` arrays, object-type `['options', 'choices', 'actions', 'selections']`, and creates cardClicked entries from `displayCards`
+- **Prompt data flow**: Karabast WebSocket → `main.js` (MAIN world) → `window.postMessage` → `bridge.js` (ISOLATED) → `chrome.runtime.sendMessage` → `background/index.js`. Actions back: `bridge.js` → `chrome.tabs.sendMessage({ type: 'INJECT_AND_EXECUTE', action })` → `window.postMessage({ source: 'swu-ai-bridge', payload: { type: 'EXECUTE_ACTION', action } })` → `main.js` → `gameSocket.send()`
+- **`encodeActions` handles `cardId`**: line 186 of model.js pushes `hashCardId(action.cardId)` for any action with a `cardId` property
+- **`statefulPromptResults` bypasses client UI**: sends `42["game","statefulPromptResults",distribution,uuid]` directly via Socket.IO. Server calls `game.statefulPromptResults(userId, results, uuid)` → `DistributeAmongTargetsPrompt.onStatefulPromptResults`. Server expects `{ type: 'distributeDamage'|..., valueDistribution: [{ uuid: string, amount: number }] }`.
+- **`DistributePromptType` enum values**: `'distributeDamage'`, `'distributeIndirectDamage'`, `'distributeHealing'`, `'distributeExperience'`, `'distributeAdvantage'`. Amounts must be integers, total should equal `amount` (unless `canDistributeLess` is true).
+- **Card UUIDs in Forceteki 2.0**: `card.uuid = 'Card' + '_' + nextId` from `GameStateManager.ts:88`. `card.uuid === cardId` matching via `Game.findAnyCardInAnyList(cardId)`. `DistributeAmongTargetsPrompt.formatPromptResults` matches `target.uuid === card.uuid`.
+- **Accuracy metric**: preference accuracy — `score[taken] >= max(score[non-taken])` for wins
+- All other context from prior versions still applies (ranking loss, plan system, server sync, etc.)
 
 ## Relevant Files
-- `server/server.js`: Express server on port 3456, REST API for weights/stats/games, serves dashboard static files.
-- `server/dashboard/index.html`: Dashboard SPA layout with network viz, stats, accuracy chart canvas, game list, export/clear controls.
-- `server/dashboard/dashboard.js`: Dashboard logic — auto-refresh, fetch API, render accuracy chart (canvas 2D), game browser, toast notifications.
-- `server/package.json`: Dependencies (express, cors).
-- `src/background/model.js`: NeuralNet + Layer classes with `outputScale`, `backward` with scaled linear `dz`, `trainRankingStep` with `weightDecay`. `ACTION_GAIN=5` in `encodeActions`. `hashActionKey()` helper.
-- `src/background/index.js`: Multi-game session routing via `gameSessions` Map. Plan functions using `getActionsForPlayer`/`getBotActionsHash`, dispersion on plan scores, phase guards in `selectAiAction` and `sendRecommendations`, `categorizeAction` crash fix. Server sync handlers (`SET_SYNC_SERVER`, `SYNC_NOW`, `syncAllToServer()`).
-- `src/background/storage.js`: IndexedDB persistence. Server sync helpers: `syncToServer()`, `loadFromServer()`, `getSyncServerUrl()`, `setSyncServerUrl()`.
-- `src/popup/index.html`: Popup UI with network viz card, plan card, dashboard button, server URL input, sync button.
-- `src/popup/index.js`: `renderNetwork()` draws 4-layer architecture; `renderPlan()` with status icons and scores; `PLAN_UPDATE` listener. Dashboard button opens server URL in new tab.
-- `start-local.ps1` / `start-local.bat`: Clone + launch Forceteki server (:9500), client (:3000), and data server (:3456).
-- `manifest.json`: Host permissions include `http://localhost:3456/*`.
+- `chrome-extension/src/background/index.js`: core service worker — `loadAllSettings` (line 116), `trySequences` distribute handler (line 1367), `getAvailableActions` (line 1527), `getSelectableCardIds` (line 1643), `sendRecommendations` fallback (line 1066), `describeAction` (line 718), `getActionKey` (line 94)
+- `chrome-extension/src/background/model.js`: NeuralNet, Layer, `encodeActions` with `cardId` hashing (line 186)
+- `chrome-extension/src/content/main.js`: `EXECUTE_ACTION` handler with `statefulPromptResults` support (line 90), `swuAiSend` function
+- `chrome-extension/src/content/bridge.js`: passes `INJECT_AND_EXECUTE` messages from background to main world
+- `forceteki/server/game/core/gameSteps/prompts/DistributeAmongTargetsPrompt.ts`: server-side prompt handler, `formatPromptResults` matches against `legalTargets` by `card.uuid`
+- `forceteki/server/game/core/Game.ts`: `findAnyCardInAnyList(cardId)` at line 691 finds card by `uuid`, `statefulPromptResults` at line 1076
+- `forceteki/server/game/core/GameStateManager.ts:88`: UUID assignment `go.uuid = go.getGameObjectName() + '_' + nextId`
+- `forceteki/server/game/core/card/Card.ts`: `getGameObjectName()` returns `'Card'`, `getSummary` at line 1389, `getCardState` at line 1436
+- `src/background/storage.js`: IndexedDB persistence + server sync
+- `src/content/main.js`: content script — sends `menuButton` and `cardClicked` actions
+- `src/popup/index.html` / `index.js`: UI with network viz, plan card, dashboard button
+- `server/`: Express server on port 3456, dashboard SPA
+- `manifest.json`: host permissions include `http://localhost:3456/*`

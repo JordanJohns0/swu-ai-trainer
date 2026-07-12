@@ -87,6 +87,7 @@ if (!window.__swuAiPatched) {
       if (a.type === 'cardClicked') return swuAiSend('game', 'cardClicked', a.cardId);
       if (a.type === 'menuButton') return swuAiSend('game', 'menuButton', a.arg ?? '', a.uuid ?? '');
       if (a.type === 'pass') return swuAiSend('game', 'menuButton', 'pass', '');
+      if (a.type === 'statefulPromptResults') return swuAiSend('game', 'statefulPromptResults', a.distribution, a.uuid);
     }
     if (p && p.type === 'DIAG_REQUEST') {
       window.postMessage({ source: 'swu-ai-inject', payload: { type: 'DIAG_RESULT', data: {

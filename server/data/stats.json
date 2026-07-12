@@ -1,510 +1,510 @@
 {
   "id": "main",
-  "gamesTrained": 67,
-  "lastTrainedAt": 1781373594760,
-  "accuracy": 0.7905405405405406,
-  "examples": 25473,
-  "updatedAt": 1781373595468,
+  "gamesTrained": 39,
+  "lastTrainedAt": 1781385935005,
+  "accuracy": 0,
+  "examples": 1965,
+  "updatedAt": 1781385935065,
   "accuracyHistory": [
     {
-      "accuracy": 0.9126984126984127,
-      "gamesTrained": 6,
-      "at": 1781325648201
-    },
-    {
-      "accuracy": 0.9126984126984127,
-      "gamesTrained": 6,
-      "at": 1781325648345
+      "accuracy": 0,
+      "gamesTrained": 15,
+      "at": 1781383143613
     },
     {
       "accuracy": 0,
-      "gamesTrained": 7,
-      "at": 1781364845527
+      "gamesTrained": 39,
+      "at": 1781383143617
     },
     {
       "accuracy": 0,
-      "gamesTrained": 8,
-      "at": 1781364845568
+      "gamesTrained": 40,
+      "at": 1781383143972
     },
     {
-      "accuracy": 1,
-      "gamesTrained": 10,
-      "at": 1781364949772
+      "accuracy": 0,
+      "gamesTrained": 26,
+      "at": 1781383284443
     },
     {
-      "accuracy": 1,
-      "gamesTrained": 10,
-      "at": 1781364949778
+      "accuracy": 0,
+      "gamesTrained": 13,
+      "at": 1781383284481
     },
     {
-      "accuracy": 1,
-      "gamesTrained": 12,
-      "at": 1781365860322
+      "accuracy": 0,
+      "gamesTrained": 27,
+      "at": 1781383284484
     },
     {
-      "accuracy": 1,
-      "gamesTrained": 12,
-      "at": 1781365860332
-    },
-    {
-      "accuracy": 0.875,
+      "accuracy": 0,
       "gamesTrained": 14,
-      "at": 1781366830986
+      "at": 1781383284536
     },
     {
-      "accuracy": 0.875,
-      "gamesTrained": 14,
-      "at": 1781366830990
+      "accuracy": 0,
+      "gamesTrained": 15,
+      "at": 1781383285643
     },
     {
-      "accuracy": 0.8461538461538461,
+      "accuracy": 0,
+      "gamesTrained": 42,
+      "at": 1781383298928
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 42,
+      "at": 1781383298964
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 16,
-      "at": 1781368106522
-    },
-    {
-      "accuracy": 0.8461538461538461,
-      "gamesTrained": 16,
-      "at": 1781368106563
+      "at": 1781383299007
     },
     {
       "accuracy": 0,
       "gamesTrained": 17,
-      "at": 1781368107837
+      "at": 1781383299037
     },
     {
-      "accuracy": 1,
-      "gamesTrained": 19,
-      "at": 1781368752435
-    },
-    {
-      "accuracy": 1,
-      "gamesTrained": 20,
-      "at": 1781368752447
-    },
-    {
-      "accuracy": 1,
-      "gamesTrained": 20,
-      "at": 1781368752484
-    },
-    {
-      "accuracy": 0.8507462686567164,
-      "gamesTrained": 23,
-      "at": 1781369520414
-    },
-    {
-      "accuracy": 0.8507462686567164,
-      "gamesTrained": 23,
-      "at": 1781369520415
-    },
-    {
-      "accuracy": 0.8507462686567164,
-      "gamesTrained": 23,
-      "at": 1781369520645
-    },
-    {
-      "accuracy": 0.9390243902439024,
-      "gamesTrained": 25,
-      "at": 1781370154535
-    },
-    {
-      "accuracy": 0.9390243902439024,
-      "gamesTrained": 25,
-      "at": 1781370154674
-    },
-    {
-      "accuracy": 0.9390243902439024,
-      "gamesTrained": 25,
-      "at": 1781370154713
-    },
-    {
-      "accuracy": 0.9390243902439024,
-      "gamesTrained": 25,
-      "at": 1781370154789
-    },
-    {
-      "accuracy": 0.9846153846153847,
-      "gamesTrained": 28,
-      "at": 1781370171971
-    },
-    {
-      "accuracy": 0.9846153846153847,
-      "gamesTrained": 28,
-      "at": 1781370172102
-    },
-    {
-      "accuracy": 0.9846153846153847,
-      "gamesTrained": 28,
-      "at": 1781370172158
-    },
-    {
-      "accuracy": 0.9754098360655737,
-      "gamesTrained": 30,
-      "at": 1781370206281
-    },
-    {
-      "accuracy": 0.9754098360655737,
-      "gamesTrained": 30,
-      "at": 1781370206326
-    },
-    {
-      "accuracy": 0.9754098360655737,
-      "gamesTrained": 30,
-      "at": 1781370206402
-    },
-    {
-      "accuracy": 0.9754098360655737,
-      "gamesTrained": 30,
-      "at": 1781370206440
-    },
-    {
-      "accuracy": 0.9733333333333334,
-      "gamesTrained": 33,
-      "at": 1781370233479
-    },
-    {
-      "accuracy": 0.9733333333333334,
-      "gamesTrained": 33,
-      "at": 1781370233538
-    },
-    {
-      "accuracy": 0.9733333333333334,
-      "gamesTrained": 34,
-      "at": 1781370233704
-    },
-    {
-      "accuracy": 0.9733333333333334,
-      "gamesTrained": 34,
-      "at": 1781370233727
-    },
-    {
-      "accuracy": 0.9733333333333334,
-      "gamesTrained": 34,
-      "at": 1781370233771
-    },
-    {
-      "accuracy": 0.5230769230769231,
-      "gamesTrained": 36,
-      "at": 1781370399290
-    },
-    {
-      "accuracy": 0.5230769230769231,
-      "gamesTrained": 37,
-      "at": 1781370399615
-    },
-    {
-      "accuracy": 0.5230769230769231,
-      "gamesTrained": 37,
-      "at": 1781370399882
-    },
-    {
-      "accuracy": 0.5230769230769231,
-      "gamesTrained": 37,
-      "at": 1781370400127
-    },
-    {
-      "accuracy": 0.8760683760683761,
+      "accuracy": 0,
       "gamesTrained": 18,
-      "at": 1781370618435
+      "at": 1781383300993
     },
     {
-      "accuracy": 0.8273381294964028,
-      "gamesTrained": 20,
-      "at": 1781370683052
+      "accuracy": 0,
+      "gamesTrained": 35,
+      "at": 1781383353863
     },
     {
-      "accuracy": 0.8273381294964028,
+      "accuracy": 0,
+      "gamesTrained": 35,
+      "at": 1781383353897
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 19,
+      "at": 1781383447615
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 36,
+      "at": 1781383447631
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 21,
-      "at": 1781370683359
+      "at": 1781383447671
     },
     {
-      "accuracy": 0.8273381294964028,
-      "gamesTrained": 21,
-      "at": 1781370683363
-    },
-    {
-      "accuracy": 0.8273381294964028,
-      "gamesTrained": 21,
-      "at": 1781370683498
-    },
-    {
-      "accuracy": 0.8823529411764706,
-      "gamesTrained": 23,
-      "at": 1781370836009
-    },
-    {
-      "accuracy": 0.8823529411764706,
-      "gamesTrained": 23,
-      "at": 1781370836134
-    },
-    {
-      "accuracy": 0.8556701030927835,
-      "gamesTrained": 25,
-      "at": 1781370877372
-    },
-    {
-      "accuracy": 0.8556701030927835,
-      "gamesTrained": 25,
-      "at": 1781370877555
-    },
-    {
-      "accuracy": 0.9,
-      "gamesTrained": 28,
-      "at": 1781370908764
-    },
-    {
-      "accuracy": 0.9,
-      "gamesTrained": 29,
-      "at": 1781370908939
-    },
-    {
-      "accuracy": 0.9,
-      "gamesTrained": 29,
-      "at": 1781370908970
-    },
-    {
-      "accuracy": 0.9,
-      "gamesTrained": 29,
-      "at": 1781370909098
-    },
-    {
-      "accuracy": 0.8311688311688312,
-      "gamesTrained": 32,
-      "at": 1781370935851
-    },
-    {
-      "accuracy": 0.8311688311688312,
-      "gamesTrained": 32,
-      "at": 1781370936027
-    },
-    {
-      "accuracy": 0.8311688311688312,
-      "gamesTrained": 32,
-      "at": 1781370936167
-    },
-    {
-      "accuracy": 0.8613861386138614,
-      "gamesTrained": 35,
-      "at": 1781370976341
-    },
-    {
-      "accuracy": 0.8613861386138614,
-      "gamesTrained": 35,
-      "at": 1781370976450
-    },
-    {
-      "accuracy": 0.8613861386138614,
-      "gamesTrained": 35,
-      "at": 1781370976665
-    },
-    {
-      "accuracy": 0.8613861386138614,
-      "gamesTrained": 35,
-      "at": 1781370976739
-    },
-    {
-      "accuracy": 0.9487179487179487,
+      "accuracy": 0,
       "gamesTrained": 37,
-      "at": 1781371004711
+      "at": 1781383447674
     },
     {
-      "accuracy": 0.9487179487179487,
-      "gamesTrained": 37,
-      "at": 1781371004822
+      "accuracy": 0,
+      "gamesTrained": 21,
+      "at": 1781383447709
     },
     {
-      "accuracy": 0.9166666666666666,
+      "accuracy": 0,
+      "gamesTrained": 38,
+      "at": 1781383447734
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 38,
+      "at": 1781383447757
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 21,
+      "at": 1781383447759
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 22,
+      "at": 1781383448345
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 39,
-      "at": 1781371191170
+      "at": 1781383448367
     },
     {
-      "accuracy": 0.9166666666666666,
-      "gamesTrained": 39,
-      "at": 1781371191521
+      "accuracy": 0,
+      "gamesTrained": 40,
+      "at": 1781383448484
     },
     {
-      "accuracy": 0.9166666666666666,
-      "gamesTrained": 39,
-      "at": 1781371191572
-    },
-    {
-      "accuracy": 0.9204545454545454,
+      "accuracy": 0,
       "gamesTrained": 41,
-      "at": 1781371595858
+      "at": 1781383778212
     },
     {
-      "accuracy": 0.9431818181818182,
+      "accuracy": 0,
       "gamesTrained": 42,
-      "at": 1781371596017
+      "at": 1781383778270
     },
     {
-      "accuracy": 0.9431818181818182,
-      "gamesTrained": 42,
-      "at": 1781371596221
+      "accuracy": 0,
+      "gamesTrained": 43,
+      "at": 1781383778300
     },
     {
-      "accuracy": 0.9431818181818182,
-      "gamesTrained": 42,
-      "at": 1781371596228
-    },
-    {
-      "accuracy": 0.9328358208955224,
+      "accuracy": 0,
       "gamesTrained": 44,
-      "at": 1781372034213
+      "at": 1781383778393
     },
     {
-      "accuracy": 0.9328358208955224,
+      "accuracy": 0,
+      "gamesTrained": 45,
+      "at": 1781383780233
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 43,
+      "at": 1781383895178
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 44,
-      "at": 1781372034461
+      "at": 1781383895264
     },
     {
-      "accuracy": 0.9328358208955224,
-      "gamesTrained": 44,
-      "at": 1781372034468
+      "accuracy": 0,
+      "gamesTrained": 45,
+      "at": 1781383895373
     },
     {
-      "accuracy": 0.849624060150376,
+      "accuracy": 0,
+      "gamesTrained": 69,
+      "at": 1781383895412
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 69,
+      "at": 1781383895500
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 69,
+      "at": 1781383895539
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 70,
+      "at": 1781383897239
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 46,
+      "at": 1781384067887
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 47,
-      "at": 1781372192751
+      "at": 1781384067950
     },
     {
-      "accuracy": 0.8270676691729323,
+      "accuracy": 0,
+      "gamesTrained": 46,
+      "at": 1781384067956
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 47,
-      "at": 1781372193314
+      "at": 1781384067986
     },
     {
-      "accuracy": 0.8270676691729323,
-      "gamesTrained": 47,
-      "at": 1781372193316
+      "accuracy": 0,
+      "gamesTrained": 48,
+      "at": 1781384069944
     },
     {
-      "accuracy": 0.8270676691729323,
-      "gamesTrained": 47,
-      "at": 1781372193554
+      "accuracy": 0,
+      "gamesTrained": 72,
+      "at": 1781384104742
     },
     {
-      "accuracy": 0.9466666666666667,
+      "accuracy": 0,
+      "gamesTrained": 72,
+      "at": 1781384104776
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 49,
-      "at": 1781372230535
+      "at": 1781384215397
     },
     {
-      "accuracy": 0.9466666666666667,
+      "accuracy": 0,
+      "gamesTrained": 48,
+      "at": 1781384215438
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 49,
-      "at": 1781372230536
+      "at": 1781384215487
     },
     {
-      "accuracy": 0.9466666666666667,
-      "gamesTrained": 49,
-      "at": 1781372230674
+      "accuracy": 0,
+      "gamesTrained": 50,
+      "at": 1781384215505
     },
     {
-      "accuracy": 0.9466666666666667,
-      "gamesTrained": 49,
-      "at": 1781372230789
+      "accuracy": 0,
+      "gamesTrained": 50,
+      "at": 1781384217406
     },
     {
-      "accuracy": 0.8452380952380952,
+      "accuracy": 0,
       "gamesTrained": 51,
-      "at": 1781372284078
+      "at": 1781384652982
     },
     {
-      "accuracy": 0.8452380952380952,
+      "accuracy": 0,
+      "gamesTrained": 51,
+      "at": 1781384653049
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 52,
-      "at": 1781372284359
+      "at": 1781384653055
     },
     {
-      "accuracy": 0.8452380952380952,
+      "accuracy": 0,
       "gamesTrained": 52,
-      "at": 1781372284495
+      "at": 1781384653085
     },
     {
-      "accuracy": 0.8452380952380952,
-      "gamesTrained": 52,
-      "at": 1781372284569
-    },
-    {
-      "accuracy": 0.9259259259259259,
+      "accuracy": 0,
       "gamesTrained": 53,
-      "at": 1781372304456
+      "at": 1781384655052
     },
     {
-      "accuracy": 0.9029126213592233,
+      "accuracy": 0,
+      "gamesTrained": 54,
+      "at": 1781384803384
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 53,
+      "at": 1781384803385
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 28,
+      "at": 1781384803409
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 29,
+      "at": 1781384803412
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 30,
+      "at": 1781384805364
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 74,
+      "at": 1781384831880
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 74,
+      "at": 1781384832011
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 76,
+      "at": 1781384984334
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 76,
+      "at": 1781384984374
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 55,
-      "at": 1781372367298
+      "at": 1781384997046
     },
     {
-      "accuracy": 0.9029126213592233,
+      "accuracy": 0,
+      "gamesTrained": 54,
+      "at": 1781384997094
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 56,
-      "at": 1781372367567
+      "at": 1781384997104
     },
     {
-      "accuracy": 0.9029126213592233,
-      "gamesTrained": 56,
-      "at": 1781372367568
+      "accuracy": 0,
+      "gamesTrained": 55,
+      "at": 1781384997125
     },
     {
-      "accuracy": 0.9029126213592233,
-      "gamesTrained": 56,
-      "at": 1781372367632
+      "accuracy": 0,
+      "gamesTrained": 57,
+      "at": 1781385185140
     },
     {
-      "accuracy": 0.8571428571428571,
+      "accuracy": 0,
       "gamesTrained": 58,
-      "at": 1781372791654
+      "at": 1781385185172
     },
     {
-      "accuracy": 0.8571428571428571,
+      "accuracy": 0,
+      "gamesTrained": 31,
+      "at": 1781385185210
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 32,
+      "at": 1781385185291
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 59,
+      "at": 1781385277356
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 57,
+      "at": 1781385277435
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 60,
+      "at": 1781385277442
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 58,
-      "at": 1781372791656
+      "at": 1781385277445
     },
     {
-      "accuracy": 0.8571428571428571,
-      "gamesTrained": 58,
-      "at": 1781372791845
+      "accuracy": 0,
+      "gamesTrained": 59,
+      "at": 1781385279446
     },
     {
-      "accuracy": 0.8145695364238411,
+      "accuracy": 0,
       "gamesTrained": 61,
-      "at": 1781373103192
+      "at": 1781385290819
     },
     {
-      "accuracy": 0.8145695364238411,
-      "gamesTrained": 61,
-      "at": 1781373103706
+      "accuracy": 0,
+      "gamesTrained": 62,
+      "at": 1781385290844
     },
     {
-      "accuracy": 0.8145695364238411,
-      "gamesTrained": 61,
-      "at": 1781373103726
+      "accuracy": 0,
+      "gamesTrained": 78,
+      "at": 1781385411193
     },
     {
-      "accuracy": 0.8846153846153846,
+      "accuracy": 0,
+      "gamesTrained": 78,
+      "at": 1781385411271
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 64,
-      "at": 1781373365657
+      "at": 1781385452263
     },
     {
-      "accuracy": 0.8846153846153846,
+      "accuracy": 0,
+      "gamesTrained": 64,
+      "at": 1781385452291
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 65,
-      "at": 1781373366035
+      "at": 1781385635117
     },
     {
-      "accuracy": 0.8846153846153846,
-      "gamesTrained": 65,
-      "at": 1781373366367
+      "accuracy": 0,
+      "gamesTrained": 34,
+      "at": 1781385635122
     },
     {
-      "accuracy": 0.8846153846153846,
-      "gamesTrained": 65,
-      "at": 1781373366382
+      "accuracy": 0,
+      "gamesTrained": 66,
+      "at": 1781385635127
     },
     {
-      "accuracy": 0.7905405405405406,
+      "accuracy": 0,
+      "gamesTrained": 35,
+      "at": 1781385635129
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 36,
+      "at": 1781385637126
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 60,
+      "at": 1781385739989
+    },
+    {
+      "accuracy": 0,
       "gamesTrained": 67,
-      "at": 1781373595127
+      "at": 1781385739992
     },
     {
-      "accuracy": 0.7905405405405406,
-      "gamesTrained": 67,
-      "at": 1781373595468
+      "accuracy": 0,
+      "gamesTrained": 68,
+      "at": 1781385740007
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 61,
+      "at": 1781385740034
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 62,
+      "at": 1781385741031
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 69,
+      "at": 1781385741032
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 63,
+      "at": 1781385742050
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 71,
+      "at": 1781385932977
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 71,
+      "at": 1781385933073
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 38,
+      "at": 1781385933078
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 38,
+      "at": 1781385933087
+    },
+    {
+      "accuracy": 0,
+      "gamesTrained": 39,
+      "at": 1781385935065
     }
   ]
 }

@@ -92,6 +92,9 @@ function syncSessionGlobals() {
 }
 
 function getActionKey(action) {
+  if (action.type === 'statefulPromptResults') {
+    return action.type + ':' + (action.distribution?.type || 'unknown');
+  }
   return action.type + ':' + (action.arg ?? action.cardId ?? '');
 }
 
@@ -113,10 +116,30 @@ function getBotActionsHash(state) {
   return actions.map(a => getActionKey(a)).sort().join('|');
 }
 
-// Load persistent settings
-getSetting('minWait', 1000).then(v => minWait = v).catch(() => {});
-getSetting('maxWait', 3000).then(v => maxWait = v).catch(() => {});
-getSetting('autoTrain', false).then(v => autoTrain = v).catch(() => {});
+let settingsLoaded = false;
+async function loadAllSettings() {
+  if (settingsLoaded) return;
+  settingsLoaded = true;
+  try {
+    const [aiPlaying, req, play, train, min, max] = await Promise.all([
+      getSetting('isAiPlaying', false),
+      getSetting('autoRequeue', false),
+      getSetting('autoPlay', false),
+      getSetting('autoTrain', false),
+      getSetting('minWait', 1000),
+      getSetting('maxWait', 3000),
+    ]);
+    isAiPlaying = aiPlaying;
+    autoRequeue = req;
+    autoPlay = play;
+    autoTrain = train;
+    minWait = min;
+    maxWait = max;
+    console.log('Loaded settings:', { isAiPlaying, autoRequeue, autoPlay, autoTrain, minWait, maxWait });
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+  }
+}
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.tab?.id) lastTabId = sender.tab.id;
@@ -126,6 +149,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     console.log('playerTabMap:', msg.tabPlayerId, '→ tab', sender.tab.id);
   }
   (async () => {
+    await loadAllSettings();
     try {
       if (msg.type === 'FROM_PAGE') {
         await handlePageMessage(msg.payload, sender.tab?.id);
@@ -150,11 +174,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         isAiPlaying = msg.enabled;
         aiPauseRequested = !msg.enabled;
         if (!isAiPlaying) aiPauseRequested = true;
+        await saveSetting('isAiPlaying', isAiPlaying);
         sendResponse({ ok: true });
         return;
       }
       if (msg.type === 'TOGGLE_AUTO_REQUEUE') {
         autoRequeue = msg.enabled;
+        await saveSetting('autoRequeue', autoRequeue);
         sendResponse({ ok: true });
         return;
       }
@@ -166,6 +192,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       if (msg.type === 'TOGGLE_AUTO_PLAY') {
         autoPlay = msg.enabled;
+        await saveSetting('autoPlay', autoPlay);
         sendResponse({ ok: true });
         return;
       }
@@ -590,18 +617,20 @@ async function selectAiAction(recording) {
         currentTurnPlan = reviseTurnPlan(latestState, currentTurnPlan);
         broadcastPlan(currentTurnPlan);
       }
-      const currentItem = currentTurnPlan.items.find(i => i.status === 'current' && i.source === 'bot');
+      const currentItem = currentTurnPlan.items.find(i => i.status === 'current' && i.source === 'bot' && !isCancelAction(i.action));
       if (currentItem) {
         const actionKey = getActionKey(currentItem.action);
-        if (actions.some(a => getActionKey(a) === actionKey)) {
+        const matchedAction = actions.find(a => getActionKey(a) === actionKey && planTextMatches(currentItem, a));
+        if (matchedAction) {
           console.log('selectAiAction: plan returned', actionKey, currentItem.description);
           return currentItem.action;
         }
       }
-      const firstPending = currentTurnPlan.items.find(i => i.source === 'bot' && (i.status === 'pending' || i.status === 'current'));
+      const firstPending = currentTurnPlan.items.find(i => i.source === 'bot' && (i.status === 'pending' || i.status === 'current') && !isCancelAction(i.action));
       if (firstPending) {
         const actionKey = getActionKey(firstPending.action);
-        if (actions.some(a => getActionKey(a) === actionKey)) {
+        const matchedAction = actions.find(a => getActionKey(a) === actionKey && planTextMatches(firstPending, a));
+        if (matchedAction) {
           firstPending.status = 'current';
           broadcastPlan(currentTurnPlan);
           console.log('selectAiAction: plan first pending', actionKey, firstPending.description);
@@ -718,6 +747,15 @@ function describeAction(a, gameState) {
     if (info.pile === 'base') return `Attack ${name}${suffix}`;
 
     return `Select ${name}${suffix}`;
+  }
+  if (a.type === 'statefulPromptResults') {
+    const dist = a.distribution;
+    if (dist && dist.valueDistribution) {
+      const total = dist.valueDistribution.reduce((s, d) => s + d.amount, 0);
+      const targets = dist.valueDistribution.length;
+      return `Distribute ${total} ${dist.type || 'damage'} to ${targets} target${targets !== 1 ? 's' : ''}`;
+    }
+    return `Submit ${dist?.type || 'distribution'}`;
   }
   return a.text || a.arg || a.command || 'Action';
 }
@@ -1057,7 +1095,7 @@ async function sendRecommendations(recording) {
       if (actions.length === 0 && lastUnknownEvent?.data) {
         const ed = lastUnknownEvent.data;
         // Check common array field names for buttons/choices
-        for (const key of ['buttons', 'options', 'choices', 'actions', 'menuItems', 'selections', 'prompts', 'triggers', 'items', 'entries']) {
+        for (const key of ['buttons', 'options', 'choices', 'actions', 'menuItems', 'selections', 'prompts', 'triggers', 'items', 'entries', 'perCardButtons', 'players']) {
           if (Array.isArray(ed[key]) && ed[key].length > 0) {
             for (let ei = 0; ei < ed[key].length; ei++) {
               const entry = ed[key][ei];
@@ -1069,7 +1107,7 @@ async function sendRecommendations(recording) {
         }
         // Also check for object-type options (key-value pairs)
         if (actions.length === 0) {
-          for (const key of ['options', 'choices', 'actions']) {
+          for (const key of ['options', 'choices', 'actions', 'selections']) {
             if (ed[key] && typeof ed[key] === 'object' && !Array.isArray(ed[key])) {
               for (const [optKey, optVal] of Object.entries(ed[key])) {
                 const label = typeof optVal === 'string' ? optVal : (optVal.text || optVal.label || optVal.name || optVal.title || optKey);
@@ -1077,6 +1115,13 @@ async function sendRecommendations(recording) {
               }
               if (actions.length > 0) break;
             }
+          }
+        }
+        // Check for displayCards – create cardClicked entries
+        if (actions.length === 0 && Array.isArray(ed.displayCards) && ed.displayCards.length > 0) {
+          for (const card of ed.displayCards) {
+            const cardId = card.uuid || card.id;
+            if (cardId) actions.push({ type: 'cardClicked', cardId, text: card.name || card.title || 'Select card' });
           }
         }
       }
@@ -1309,6 +1354,15 @@ function isCancelAction(a) {
   return matchesMulliganAction(a, 'cancel') || matchesMulliganAction(a, 'close');
 }
 
+function planTextMatches(planItem, currentAction) {
+  // Verify the current action's text is similar to the plan item's text,
+  // preventing stale key collisions where different buttons share the same arg.
+  const planText = String(planItem.action.text || planItem.action.arg || planItem.description || '').toLowerCase().trim();
+  const currentText = String(currentAction.text || currentAction.arg || currentAction.command || '').toLowerCase().trim();
+  if (!planText || !currentText) return true;
+  return planText === currentText || planText.includes(currentText) || currentText.includes(planText);
+}
+
 async function trySequences(state) {
   const actions = getAvailableActions(state).filter(a => !failedActionKeys.has(getActionKey(a)));
   if (actions.length === 0) return null;
@@ -1321,10 +1375,84 @@ async function trySequences(state) {
     return allowBtn;
   }
 
-  // Distribute damage / assign indirect damage — use NN to pick targets
+  // Distribute damage / healing among targets — submit statefulPromptResults
   const player = getMyPlayerState(state);
   if (player?.promptState?.promptType === 'distributeAmongTargets') {
+    const promptData = player.promptState.distributeAmongTargets;
+    if (promptData) {
+      const doneBtn = actions.find(a => a.command === 'statefulPromptResult' || matchesMulliganAction(a, 'done') || matchesMulliganAction(a, 'confirm'));
+      const promptUuid = doneBtn?.uuid || player.promptState.promptUuid || '';
+      const { type: distributeType, amount, canDistributeLess, canChooseNoTargets, maxTargets } = promptData;
+
+      const selectableIds = getSelectableCardIds(state);
+
+      // No targets — submit empty if allowed, else fallback to done
+      if (selectableIds.length === 0) {
+        if (canChooseNoTargets) {
+          console.log('distribute: no targets, submitting empty');
+          return { type: 'statefulPromptResults', distribution: { type: distributeType, valueDistribution: [] }, uuid: promptUuid };
+        }
+        console.log('distribute: no targets but distribution required');
+        return doneBtn || null;
+      }
+
+      // Score each target via NN (encode as cardClicked)
+      const model = await loadModel();
+      const cardActions = selectableIds.map(id => ({ type: 'cardClicked', cardId: id }));
+      let scored;
+      if (model && cardActions.length > 0) {
+        const stateTensor = encodeGameState(state);
+        const actionFeatures = encodeActions(cardActions);
+        scored = selectableIds.map((id, i) => {
+          const rawScore = model.forward(stateTensor, actionFeatures[i]);
+          const cleanScore = isNaN(rawScore) || !isFinite(rawScore) ? 0.5 : rawScore;
+          return { uuid: id, score: cleanScore };
+        });
+      } else {
+        scored = selectableIds.map(id => ({ uuid: id, score: 0.5 }));
+      }
+
+      // Sort by score descending, apply maxTargets limit
+      scored.sort((a, b) => b.score - a.score);
+      if (maxTargets && maxTargets > 0 && maxTargets < scored.length) {
+        scored = scored.slice(0, maxTargets);
+      }
+
+      // Proportional distribution by score
+      const totalScore = scored.reduce((sum, t) => sum + Math.max(0.01, t.score), 0);
+      const valueDistribution = [];
+      let remaining = amount;
+
+      for (let i = 0; i < scored.length; i++) {
+        if (i === scored.length - 1) {
+          // Last target gets the remainder
+          valueDistribution.push({ uuid: scored[i].uuid, amount: remaining });
+        } else {
+          const proportion = Math.max(0.01, scored[i].score) / totalScore;
+          const allocated = Math.max(0, Math.min(remaining, Math.round(amount * proportion)));
+          valueDistribution.push({ uuid: scored[i].uuid, amount: allocated });
+          remaining -= allocated;
+        }
+      }
+
+      const filtered = valueDistribution.filter(d => d.amount > 0);
+
+      if (filtered.length === 0 && canChooseNoTargets) {
+        console.log('distribute: all zero, submitting empty');
+        return { type: 'statefulPromptResults', distribution: { type: distributeType, valueDistribution: [] }, uuid: promptUuid };
+      }
+
+      console.log('distribute: submitting distribution', { type: distributeType, targets: filtered, total: filtered.reduce((s, d) => s + d.amount, 0), amount });
+      return {
+        type: 'statefulPromptResults',
+        distribution: { type: distributeType, valueDistribution: filtered.length > 0 ? filtered : [] },
+        uuid: promptUuid
+      };
+    }
+
+    // Fallback: old cardClicked/perCard/done behavior
     const cardActions = actions.filter(a => a.type === 'cardClicked');
+    const perCardActions = actions.filter(a => a.type === 'menuButton' && a.cardId);
     const doneBtn = actions.find(a => matchesMulliganAction(a, 'done') || matchesMulliganAction(a, 'confirm'));
     if (cardActions.length > 0) {
       const model = await loadModel();
@@ -1336,6 +1464,18 @@ async function trySequences(state) {
       }
       const pick = cardActions[Math.floor(Math.random() * cardActions.length)];
       console.log('distribute: random target', { cardId: pick.cardId });
+      return pick;
+    }
+    if (perCardActions.length > 0) {
+      const model = await loadModel();
+      if (model && perCardActions.length > 1) {
+        const stateTensor = encodeGameState(state);
+        const actionFeatures = encodeActions(perCardActions);
+        const chosen = selectBestAction(model, stateTensor, actionFeatures, perCardActions);
+        if (chosen) { console.log('distribute: NN chose per-card action', { arg: chosen.arg, cardId: chosen.cardId }); return chosen; }
+      }
+      const pick = perCardActions[Math.floor(Math.random() * perCardActions.length)];
+      console.log('distribute: random per-card action', { arg: pick.arg, cardId: pick.cardId });
       return pick;
     }
     if (doneBtn) {
@@ -1398,7 +1538,7 @@ async function trySequences(state) {
 function getAvailableActions(gameState) {
   const actions = [];
   if (gameState && gameState.players) {
-    // Scan all players for prompt buttons (not just getMyPlayerState, which may miss some states)
+    // Scan all players for prompt buttons
     for (const playerId of Object.keys(gameState.players)) {
       const player = gameState.players[playerId];
       const prompt = player?.promptState;
@@ -1407,6 +1547,35 @@ function getAvailableActions(gameState) {
           const btn = prompt.buttons[bi];
           const btnText = btn.text || btn.label || btn.name || btn.title || btn.description || btn.value || btn.content || btn.arg || btn.command || `Option ${bi + 1}`;
           actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? '', uuid: btn.uuid ?? prompt.promptUuid ?? '', command: btn.command || '', text: btnText });
+        }
+        break;
+      }
+    }
+    // Also extract dropdown list options (choose from list prompt)
+    for (const playerId of Object.keys(gameState.players)) {
+      const player = gameState.players[playerId];
+      const prompt = player?.promptState;
+      if (prompt && prompt.dropdownListOptions && Array.isArray(prompt.dropdownListOptions) && prompt.dropdownListOptions.length > 0) {
+        for (const opt of prompt.dropdownListOptions) {
+          const optText = typeof opt === 'string' ? opt : (opt.text || opt.label || opt.name || opt.title || String(opt));
+          const optVal = typeof opt === 'string' ? opt : (opt.arg || opt.value || opt.id || optText);
+          actions.push({ type: 'menuButton', arg: optVal, uuid: prompt.promptUuid ?? '', command: '', text: optText });
+        }
+        break;
+      }
+    }
+    // Also extract perCardButtons paired with displayCards
+    for (const playerId of Object.keys(gameState.players)) {
+      const player = gameState.players[playerId];
+      const prompt = player?.promptState;
+      if (prompt && prompt.displayCards && prompt.displayCards.length > 0 && prompt.perCardButtons && prompt.perCardButtons.length > 0) {
+        for (const card of prompt.displayCards) {
+          const cardId = card.uuid || card.id;
+          if (!cardId) continue;
+          for (const btn of prompt.perCardButtons) {
+            const btnText = btn.text || btn.label || btn.name || btn.title || btn.arg || btn.command || 'Action';
+            actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? cardId, uuid: btn.uuid ?? prompt.promptUuid ?? '', command: btn.command || '', text: btnText, cardId: cardId });
+          }
         }
         break;
       }
@@ -1567,6 +1736,16 @@ function getSelectableCardIds(gameState) {
     if (base && base.selectable && !base.selected) {
       const bid = base.uuid || base.id;
       if (bid) ids.push(bid);
+    }
+    // Check promptState displayCards for selectable cards
+    const prompt = player.promptState;
+    if (prompt && prompt.displayCards && prompt.displayCards.length > 0) {
+      for (const card of prompt.displayCards) {
+        if (card.selectable && !card.selected) {
+          const cid = card.uuid || card.id;
+          if (cid) ids.push(cid);
+        }
+      }
     }
   }
   return ids;
