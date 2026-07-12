@@ -26,12 +26,22 @@ Support running bots that queue into Forceteki and play games autonomously handl
 - **`bot/util.js`**: ported `getAvailableActions`, `selectAiAction`, `trySequences`, `cardToResource`, `describeAction`, etc.
 - **`bot/training.js`**: `trainModelRanking` extracted (avoids circular dep with util)
 - **`bot/decks.js`**: Cad Blue deck (Cad Bane ASH/011, Nevarro City ASH/020)
-- **`bot/bot.js`**: Socket.IO client — HTTP enter-queue → socket connect → game loop (receive gamestate → NN action → emit) → batch train → requeue
-- **`bot/start.sh`**: launch script
+- **`bot/bot.js`**: Socket.IO client — HTTP enter-queue (once) → persistent socket → game loop (receive gamestate → NN action → emit `'game'` events) → batch train → emit `'requeue'` on same socket
+
+### Verified — Game Completes
+- **Fixed `'game'` event wrapping**: Server listens for `'game'` event and dispatches by command name (`Lobby.ts:1470-1474`). Bot now emits `socket.emit('game', 'menuButton', arg, uuid)` instead of bare `socket.emit('menuButton', ...)`. All bot actions were silently dropped before this fix.
+- **Game runs to completion** (Bot-1 won, full turns played)
+- **Training pipeline works**: batch training triggers every N games, 5 epochs, weights persist
+- **`pendingRequeue` flag**: prevents duplicate processing of stale gamestate events after game end
+- **Persistent socket requeue**: emits `'requeue'` on existing socket (no new HTTP queue or socket creation) — fixes 403 "already in a lobby"
+- **Reconnect guard**: only re-queues on reconnect if no active game (`!gameId`)
+
+### Known Minor Issue
+- Frequent "no actions" diagnostic when bot is in waiting-prompt state (already acted, waiting for opponent). Shows `promptType:"resource"`/`"actionWindow"` with `buttons:0` — this is correct behavior (the waiting prompt has no buttons/selectable cards), just noisy.
 
 ### Next Steps
-1. Test bot connects, queue, and plays a full game vs itself on Ubuntu
-2. Debug any prompt types that the bot can't handle (new Forceteki 2.0 changes)
+1. Let requeue run over multiple games to verify persistent socket cycle works
+2. Debug any prompt types the bot can't handle (new Forceteki 2.0 changes)
 3. Add more decks for variety
 
 ## Key Decisions

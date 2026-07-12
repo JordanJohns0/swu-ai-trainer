@@ -87,21 +87,9 @@ function createSocket(id, name) {
       reconnectionAttempts: Infinity
     });
 
-    let firstConnect = true;
-    sock.on('connect', () => {
-      console.log(`${name} connected: ${sock.id}`);
-      if (!firstConnect) {
-        console.log(`${name} reconnected, requeuing`);
-        sock.emit('requeue');
-      }
-      firstConnect = false;
-    });
     sock.on('connect_error', (err) => console.error(`${name} connection error:`, err.message));
     sock.on('disconnect', (reason) => {
       if (reason !== 'io server disconnect') console.log(`${name} disconnected:`, reason);
-    });
-    sock.on('connection_error', (msg) => {
-      console.error(`${name} connection error from server:`, msg);
     });
 
     let settled = false;
@@ -124,13 +112,24 @@ async function runBot(id, name) {
   const socket = await createSocket(id, name);
   let gameId = null;
   let recording = null;
+  let pendingRequeue = false;
+  let firstConnect = true;
+  socket.on('connect', () => {
+    console.log(`${name} connected: ${socket.id}`);
+    if (!firstConnect && !gameId) {
+      console.log(`${name} reconnected, requeuing`);
+      socket.emit('requeue');
+    }
+    firstConnect = false;
+  });
 
   async function handleGameState(data) {
     if (!data || !data.players) return;
 
     const sid = data.id;
-    if (sid && sid !== gameId) {
+    if (sid && sid !== gameId && !pendingRequeue) {
       gameId = sid;
+      pendingRequeue = false;
       recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
     }
@@ -138,14 +137,14 @@ async function runBot(id, name) {
 
     recording.states.push({ state: data, timestamp: Date.now() });
 
-    if (data.winners && data.winners.length > 0) {
+    if (data.winners && data.winners.length > 0 && !pendingRequeue) {
+      pendingRequeue = true;
       recording.winner = data.winners;
       recording.completedAt = Date.now();
       console.log(`${name} game ended. Winner:`, data.winners);
       await saveGameRecording(recording).catch(() => {});
       gamesPlayed++;
       recording = null;
-      gameId = null;
 
       if (gamesPlayed % TRAIN_EVERY_N === 0) {
         runTraining().catch(e => console.error('Training failed:', e));
@@ -154,6 +153,7 @@ async function runBot(id, name) {
       setTimeout(() => {
         socket.emit('requeue');
         console.log(`${name} requeued`);
+        pendingRequeue = false;
       }, 3000);
       return;
     }
@@ -194,6 +194,15 @@ async function runBot(id, name) {
 
     await delay(200);
   }
+
+  socket.on('connection_error', (msg) => {
+    console.error(`${name} connection error from server:`, msg);
+    if (pendingRequeue) {
+      setTimeout(() => {
+        enterQueue(id, name, deck).catch(() => {});
+      }, 5000);
+    }
+  });
 
   socket.on('gamestate', handleGameState);
   socket.on('game', (data) => {
