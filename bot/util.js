@@ -470,7 +470,17 @@ async function selectAiAction(state, isSelfPlay) {
       failedActionKeys.clear();
       actions = allActions;
     }
-    if (actions.length === 0) return null;
+    if (actions.length === 0) {
+      const dbg = state?.players ? Object.entries(state.players).map(([id, p]) => ({
+        id,
+        promptType: p?.promptState?.promptType,
+        selectCardMode: p?.promptState?.selectCardMode,
+        buttons: p?.promptState?.buttons?.length || 0,
+        selectableCards: getSelectableCardIds(state).length
+      })) : 'no players';
+      console.log('selectAiAction: no actions available', JSON.stringify(dbg));
+      return null;
+    }
 
     // Try card-to-resource first
     const resourceAction = await cardToResource(state, actions);

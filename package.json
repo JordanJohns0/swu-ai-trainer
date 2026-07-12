@@ -1,0 +1,24 @@
+{
+  "name": "swu-ai-trainer",
+  "version": "1.0.0",
+  "description": "A neural network-based AI that learns to play **Star Wars: Unlimited** (SWU) by training on game data from Karabast.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JordanJohns0/swu-ai-trainer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/JordanJohns0/swu-ai-trainer/issues"
+  },
+  "homepage": "https://github.com/JordanJohns0/swu-ai-trainer#readme",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

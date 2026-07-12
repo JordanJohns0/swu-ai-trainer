@@ -144,8 +144,6 @@ async function runBot(id, name) {
       return;
     }
 
-    await delay(500 + Math.random() * 1000);
-
     const action = await selectAiAction(data, SELF_PLAY_MODE);
     if (!action) { console.log(`${name} no action`); return; }
 
@@ -167,16 +165,16 @@ async function runBot(id, name) {
 
     switch (action.type) {
       case 'menuButton':
-        socket.emit('menuButton', action.arg, action.uuid || '');
+        socket.emit('game', 'menuButton', action.arg, action.uuid || '');
         break;
       case 'cardClicked':
-        socket.emit('cardClicked', action.cardId);
+        socket.emit('game', 'cardClicked', action.cardId);
         break;
       case 'statefulPromptResults':
-        socket.emit('statefulPromptResults', action.distribution, action.uuid);
+        socket.emit('game', 'statefulPromptResults', action.distribution, action.uuid);
         break;
       case 'pass':
-        socket.emit('menuButton', 'pass', '');
+        socket.emit('game', 'menuButton', 'pass', '');
         break;
     }
 
