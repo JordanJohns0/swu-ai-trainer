@@ -1,5 +1,4 @@
 const http = require('http');
-const url = require('url');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
 const { selectAiAction, getActionKey } = require('./util');
@@ -12,9 +11,9 @@ const DECK_NAME = process.env.DECK_NAME || 'cad-bane';
 const SELF_PLAY_MODE = process.env.SELF_PLAY === 'true' || process.env.SELF_PLAY === '1';
 const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '5', 10);
 
-const parsedUrl = url.parse(SERVER_URL);
-const SERVER_HOST = parsedUrl.hostname || 'localhost';
-const SERVER_PORT = parseInt(parsedUrl.port, 10) || 3000;
+const serverUrl = new URL(SERVER_URL);
+const SERVER_HOST = serverUrl.hostname;
+const SERVER_PORT = parseInt(serverUrl.port, 10) || 3000;
 
 let gamesPlayed = 0;
 
@@ -56,10 +55,11 @@ async function enterQueue(id, name, deck) {
     cardPool: 'current',
     gamesToWinMode: 'bestOfOne',
     deck: {
-      metadata: { name: DECK_NAME, author: name },
+      metadata: deck.metadata || { name: DECK_NAME, author: name },
       leader: deck.leader,
       base: deck.base,
-      deck: deck.cards
+      deck: deck.cards,
+      sideboard: deck.sideboard || []
     }
   };
   const result = await httpPost('/api/enter-queue', body);

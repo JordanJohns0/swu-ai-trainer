@@ -1,13 +1,37 @@
 const CAD_BANE_DECK = {
+  metadata: { name: "Cad Blue", author: "AlmostScorpio" },
   leader: { id: 'ASH_011', count: 1 },
   base: { id: 'ASH_020', count: 1 },
   cards: [
-    { id: 'SOR_020', count: 3 }, { id: 'SOR_021', count: 3 }, { id: 'SOR_022', count: 3 },
-    { id: 'SOR_023', count: 3 }, { id: 'SOR_024', count: 3 }, { id: 'SOR_025', count: 3 },
-    { id: 'SOR_026', count: 3 }, { id: 'SOR_027', count: 3 }, { id: 'SOR_028', count: 3 },
-    { id: 'SOR_029', count: 3 }, { id: 'SOR_030', count: 3 }, { id: 'SOR_031', count: 3 },
-    { id: 'SOR_032', count: 3 }, { id: 'SOR_033', count: 3 }, { id: 'SOR_034', count: 3 },
-    { id: 'SOR_035', count: 3 }, { id: 'SOR_036', count: 2 }
+    { id: 'ASH_052', count: 3 },
+    { id: 'JTL_043', count: 3 },
+    { id: 'ASH_147', count: 2 },
+    { id: 'JTL_140', count: 3 },
+    { id: 'ASH_030', count: 3 },
+    { id: 'ASH_079', count: 2 },
+    { id: 'ASH_071', count: 3 },
+    { id: 'JTL_143', count: 1 },
+    { id: 'SEC_133', count: 3 },
+    { id: 'JTL_239', count: 3 },
+    { id: 'ASH_148', count: 3 },
+    { id: 'LAW_132', count: 1 },
+    { id: 'LAW_173', count: 3 },
+    { id: 'ASH_146', count: 3 },
+    { id: 'ASH_048', count: 2 },
+    { id: 'LOF_063', count: 2 },
+    { id: 'LAW_133', count: 1 },
+    { id: 'LOF_130', count: 3 },
+    { id: 'LAW_174', count: 3 },
+    { id: 'ASH_053', count: 3 }
+  ],
+  sideboard: [
+    { id: 'ASH_241', count: 2 },
+    { id: 'ASH_079', count: 1 },
+    { id: 'JTL_143', count: 2 },
+    { id: 'LAW_132', count: 2 },
+    { id: 'LAW_208', count: 3 },
+    { id: 'JTL_181', count: 3 },
+    { id: 'LAW_133', count: 1 }
   ]
 };
 
