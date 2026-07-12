@@ -1,3 +1,5 @@
+const http = require('http');
+const url = require('url');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
 const { selectAiAction, getActionKey } = require('./util');
@@ -10,10 +12,63 @@ const DECK_NAME = process.env.DECK_NAME || 'cad-bane';
 const SELF_PLAY_MODE = process.env.SELF_PLAY === 'true' || process.env.SELF_PLAY === '1';
 const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '5', 10);
 
+const parsedUrl = url.parse(SERVER_URL);
+const SERVER_HOST = parsedUrl.hostname || 'localhost';
+const SERVER_PORT = parseInt(parsedUrl.port, 10) || 3000;
+
 let gamesPlayed = 0;
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function httpPost(path, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const options = {
+      hostname: SERVER_HOST,
+      port: SERVER_PORT,
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data)
+      }
+    };
+    const req = http.request(options, (res) => {
+      let resp = '';
+      res.on('data', chunk => resp += chunk);
+      res.on('end', () => {
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        resolve({ ok, status: res.statusCode, body: resp });
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+async function enterQueue(id, name, deck) {
+  const body = {
+    user: { id, username: name },
+    format: 'premier',
+    cardPool: 'current',
+    gamesToWinMode: 'bestOfOne',
+    deck: {
+      metadata: { name: DECK_NAME, author: name },
+      leader: deck.leader,
+      base: deck.base,
+      deck: deck.cards
+    }
+  };
+  const result = await httpPost('/api/enter-queue', body);
+  if (result.ok) {
+    console.log(`${name} entered queue`);
+  } else {
+    console.error(`${name} queue failed:`, result.status, result.body);
+    throw new Error(`Queue status ${result.status}`);
+  }
 }
 
 function createSocket(id, name) {
@@ -32,88 +87,30 @@ function createSocket(id, name) {
       reconnectionAttempts: Infinity
     });
 
-    sock.on('connect', () => {
-      console.log(`${name} connected: ${sock.id}`);
-    });
-
-    sock.on('connect_error', (err) => {
-      console.error(`${name} connection error:`, err.message);
-    });
-
+    sock.on('connect', () => console.log(`${name} connected: ${sock.id}`));
+    sock.on('connect_error', (err) => console.error(`${name} connection error:`, err.message));
     sock.on('disconnect', (reason) => {
-      console.log(`${name} disconnected:`, reason);
+      if (reason !== 'io server disconnect') console.log(`${name} disconnected:`, reason);
     });
 
-    sock.on('error', (err) => {
-      console.error(`${name} socket error:`, err.message);
-    });
-
-    // Give time to connect
     let settled = false;
-    sock.on('connect', () => {
-      if (!settled) { settled = true; resolve(sock); }
-    });
+    sock.on('connect', () => { if (!settled) { settled = true; resolve(sock); } });
     setTimeout(() => {
       if (!settled) {
         settled = true;
         if (sock.connected) resolve(sock);
-        else reject(new Error(`${name} connection timeout`));
+        else { sock.close(); reject(new Error(`${name} connection timeout`)); }
       }
-    }, 5000);
-  });
-}
-
-async function enterQueue(id, name, deck) {
-  const body = {
-    user: { id, username: name },
-    format: 'premier',
-    cardPool: 'current',
-    gamesToWinMode: 'bestOfOne',
-    deck: {
-      metadata: { name: DECK_NAME, author: name },
-      leader: deck.leader,
-      base: deck.base,
-      deck: deck.cards
-    }
-  };
-
-  return new Promise((resolve, reject) => {
-    const http = require('http');
-    const options = {
-      hostname: 'localhost',
-      port: 3000,
-      path: '/api/enter-queue',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(JSON.stringify(body))
-      }
-    };
-
-    const req = http.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        const status = res.statusCode;
-        const success = status >= 200 && status < 300;
-        if (success) {
-          console.log(`${name} entered queue, status=${status}`);
-          resolve(true);
-        } else {
-          console.error(`${name} queue failed status=${status}:`, data);
-          reject(new Error(`Queue status ${status}: ${data}`));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(JSON.stringify(body));
-    req.end();
+    }, 10000);
   });
 }
 
 async function runBot(id, name) {
   const deck = getDeck(DECK_NAME);
-  let socket = null;
+
+  await enterQueue(id, name, deck);
+
+  const socket = await createSocket(id, name);
   let gameId = null;
   let recording = null;
 
@@ -143,9 +140,7 @@ async function runBot(id, name) {
         runTraining().catch(e => console.error('Training failed:', e));
       }
 
-      setTimeout(() => {
-        startBot(id, name).catch(e => console.error(`${name} restart failed:`, e));
-      }, 3000);
+      setTimeout(() => startBot(id, name).catch(e => console.error(`${name} restart:`, e.message)), 3000);
       return;
     }
 
@@ -188,17 +183,10 @@ async function runBot(id, name) {
     await delay(200);
   }
 
-  socket = await createSocket(id, name);
-
   socket.on('gamestate', handleGameState);
-
   socket.on('game', (data) => {
-    // Lobby/queue events, non-gamestate
     if (data && data.players) handleGameState(data);
   });
-
-  await delay(1000);
-  await enterQueue(id, name, deck);
 }
 
 async function runTraining() {
@@ -235,7 +223,6 @@ async function startBot(id, name) {
 async function main() {
   console.log('=== SWU AI Self-Play Bot ===');
   console.log('Server:', SERVER_URL);
-  console.log('Mode:', SELF_PLAY_MODE ? 'Self-play' : 'Single');
 
   if (SELF_PLAY_MODE) {
     await Promise.all([startBot('bot1', 'Bot-1'), startBot('bot2', 'Bot-2')]);
