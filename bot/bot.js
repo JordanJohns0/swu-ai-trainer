@@ -87,10 +87,21 @@ function createSocket(id, name) {
       reconnectionAttempts: Infinity
     });
 
-    sock.on('connect', () => console.log(`${name} connected: ${sock.id}`));
+    let firstConnect = true;
+    sock.on('connect', () => {
+      console.log(`${name} connected: ${sock.id}`);
+      if (!firstConnect) {
+        console.log(`${name} reconnected, requeuing`);
+        sock.emit('requeue');
+      }
+      firstConnect = false;
+    });
     sock.on('connect_error', (err) => console.error(`${name} connection error:`, err.message));
     sock.on('disconnect', (reason) => {
       if (reason !== 'io server disconnect') console.log(`${name} disconnected:`, reason);
+    });
+    sock.on('connection_error', (msg) => {
+      console.error(`${name} connection error from server:`, msg);
     });
 
     let settled = false;
@@ -140,7 +151,10 @@ async function runBot(id, name) {
         runTraining().catch(e => console.error('Training failed:', e));
       }
 
-      setTimeout(() => startBot(id, name).catch(e => console.error(`${name} restart:`, e.message)), 3000);
+      setTimeout(() => {
+        socket.emit('requeue');
+        console.log(`${name} requeued`);
+      }, 3000);
       return;
     }
 
