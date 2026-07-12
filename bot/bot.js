@@ -52,7 +52,7 @@ async function enterQueue(id, name, deck) {
   const body = {
     user: { id, username: name },
     format: 'premier',
-    cardPool: 'current',
+    cardPool: 'nextSet',
     gamesToWinMode: 'bestOfOne',
     deck: {
       metadata: deck.metadata || { name: DECK_NAME, author: name },
