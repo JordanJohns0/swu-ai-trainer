@@ -1,7 +1,7 @@
 const http = require('http');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
-const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions } = require('./util');
+const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
@@ -208,11 +208,32 @@ async function runBot(id, name) {
       return;
     }
 
-    // Smart hash dedup: if state unchanged, try next-best untried action
+    // Smart hash dedup: if state unchanged, try different action
     const currentHash = computeRichHash(data);
     const tried = triedActionsMap.get(currentHash);
     if (currentHash === lastStateHash && tried) {
-      // Previous action was ignored — try an untried action from remaining set
+      const player = getMyPlayerState(data);
+      const isDistributePrompt = player?.promptState?.promptType === 'distributeAmongTargets';
+
+      if (isDistributePrompt) {
+        // For distribute prompts, use selectAiAction which varies distribution strategies
+        const action = await selectAiAction(data, SELF_PLAY_MODE);
+        if (action) {
+          const key = getActionKey(action);
+          // Track under a variant key so different distributions count as different tries
+          const retryKey = key + ':retry' + (tried.size);
+          if (!tried.has(retryKey)) {
+            tried.add(retryKey);
+            console.log(`${name} retry distribute (${tried.size}): ${key}`);
+            await sendAction(action);
+            return;
+          }
+        }
+        console.log(`${name} distribute strategies exhausted, waiting for timeout`);
+        return;
+      }
+
+      // For other prompts, try an untried raw action from the remaining set
       const allActions = getAvailableActions(data);
       const untried = allActions.filter(a => !tried.has(getActionKey(a)));
       if (untried.length === 0) {

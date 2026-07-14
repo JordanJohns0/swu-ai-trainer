@@ -14,6 +14,9 @@ let botPlayerId = null;
 let lastSentStateHash = {};
 let lastSentActionKey = {};
 
+// Stateful prompt retry tracking: key = promptUuid, value = retry attempt count
+const statefulPromptRetries = {};
+
 function getActionKey(action) {
   if (action.type === 'statefulPromptResults') {
     return action.type + ':' + (action.distribution?.type || 'unknown');
@@ -380,27 +383,94 @@ async function trySequences(state) {
       }));
       scored.sort((a, b) => b.score - a.score);
 
-      // Distribute proportionally by score
+      // Track retry attempts per prompt to vary distribution strategy
+      const retryKey = promptUuid;
+      const retryAttempt = statefulPromptRetries[retryKey] || 0;
+      statefulPromptRetries[retryKey] = retryAttempt + 1;
+
       const targetCount = maxTargets && maxTargets > 0 ? Math.min(maxTargets, scored.length) : scored.length;
       const topTargets = scored.slice(0, targetCount);
       const totalScore = topTargets.reduce((s, t) => s + Math.max(0.01, t.score), 0);
       let remaining = amount;
       const valueDistribution = [];
 
-      for (let i = 0; i < topTargets.length; i++) {
-        if (i === topTargets.length - 1) {
-          valueDistribution.push({ uuid: topTargets[i].uuid, amount: remaining });
-        } else {
-          const proportion = Math.max(0.01, topTargets[i].score) / totalScore;
-          const allocated = Math.max(0, Math.min(remaining, Math.round(amount * proportion)));
+      // Vary distribution strategy on retry to unstick the prompt
+      const strategy = retryAttempt % 4;
+
+      if (strategy === 2 && topTargets.length > 0) {
+        // Single target — put all on highest-scored
+        valueDistribution.push({ uuid: topTargets[0].uuid, amount });
+      } else if (strategy === 3 && canChooseNoTargets) {
+        return { type: 'statefulPromptResults', distribution: { type: distributeType, valueDistribution: [] }, uuid: promptUuid };
+      } else {
+        // Proportional (strategy 0) or equal split (strategy 1)
+        for (let i = 0; i < topTargets.length; i++) {
+          let allocated;
+          if (i === topTargets.length - 1) {
+            allocated = remaining;
+          } else {
+            if (strategy === 1) {
+              allocated = Math.max(0, Math.min(remaining, Math.floor(amount / targetCount)));
+            } else {
+              const proportion = Math.max(0.01, topTargets[i].score) / totalScore;
+              allocated = Math.max(0, Math.min(remaining, Math.round(amount * proportion)));
+            }
+            if (distributeType === 'distributeIndirectDamage') {
+              const cardInfo = findCardInfo(topTargets[i].uuid, state);
+              if (cardInfo && cardInfo.hp != null) allocated = Math.min(allocated, cardInfo.hp);
+            }
+          }
           valueDistribution.push({ uuid: topTargets[i].uuid, amount: allocated });
           remaining -= allocated;
+        }
+      }
+
+      // Cap last target for indirect damage, rebalance remainder
+      if (distributeType === 'distributeIndirectDamage' && valueDistribution.length > 0) {
+        const lastEntry = valueDistribution[valueDistribution.length - 1];
+        const cardInfo = findCardInfo(lastEntry.uuid, state);
+        if (cardInfo && cardInfo.hp != null) {
+          lastEntry.amount = Math.min(lastEntry.amount, cardInfo.hp);
+        }
+        remaining = amount - valueDistribution.reduce((s, d) => s + d.amount, 0);
+      }
+
+      // Rebalance remaining amount if targets were capped
+      if (remaining > 0) {
+        for (let i = 0; i < valueDistribution.length && remaining > 0; i++) {
+          let perTargetMax = amount;
+          if (distributeType === 'distributeIndirectDamage') {
+            const cardInfo = findCardInfo(valueDistribution[i].uuid, state);
+            if (cardInfo && cardInfo.hp != null) perTargetMax = cardInfo.hp;
+          }
+          const headroom = perTargetMax - valueDistribution[i].amount;
+          if (headroom > 0) {
+            const add = Math.min(remaining, headroom);
+            valueDistribution[i].amount += add;
+            remaining -= add;
+          }
         }
       }
 
       const filtered = valueDistribution.filter(d => d.amount > 0);
       if (filtered.length === 0 && canChooseNoTargets) {
         return { type: 'statefulPromptResults', distribution: { type: distributeType, valueDistribution: [] }, uuid: promptUuid };
+      }
+
+      // If can't distribute full amount, try canDistributeLess or empty
+      if (remaining > 0 && filtered.length > 0) {
+        if (canDistributeLess) {
+          return {
+            type: 'statefulPromptResults',
+            distribution: { type: distributeType, valueDistribution: filtered },
+            uuid: promptUuid
+          };
+        }
+        if (canChooseNoTargets) {
+          return { type: 'statefulPromptResults', distribution: { type: distributeType, valueDistribution: [] }, uuid: promptUuid };
+        }
+        // Last resort: dump remaining on first target
+        filtered[0].amount += remaining;
       }
 
       return {
