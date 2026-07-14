@@ -1,7 +1,7 @@
 const http = require('http');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
-const { selectAiAction, getActionKey, getActionSetHash } = require('./util');
+const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
@@ -115,6 +115,8 @@ async function runBot(id, name) {
   let pendingRequeue = false;
   let firstConnect = true;
   let lastStateHash = null;
+  let lastActionSentTime = Date.now();
+  const STUCK_TIMEOUT = 60000;
   socket.on('connect', () => {
     console.log(`${name} connected: ${socket.id}`);
     if (!firstConnect && !gameId) {
@@ -124,14 +126,44 @@ async function runBot(id, name) {
     firstConnect = false;
   });
 
+  function computeRichHash(data) {
+    const phase = data.phase || '';
+    const promptUuids = Object.values(data.players || {})
+      .map(p => p?.promptState?.promptUuid || '')
+      .filter(Boolean)
+      .sort()
+      .join('|');
+    return `${phase}|${promptUuids}|${getActionSetHash(data)}`;
+  }
+
+  function getPlayerStateSummary(data) {
+    if (!data || !data.players) return [];
+    return Object.entries(data.players).map(([pid, p]) => ({
+      id: pid,
+      phase: data.phase,
+      promptType: p?.promptState?.promptType,
+      selectCardMode: p?.promptState?.selectCardMode,
+      menuTitle: p?.promptState?.menuTitle?.slice(0, 60),
+      buttons: p?.promptState?.buttons?.length || 0,
+      buttonArgs: (p?.promptState?.buttons || []).map(b => b.arg).filter(Boolean),
+      selectableCards: getSelectableCardIds(data).length,
+      hand: p?.cardPiles?.hand?.length || 0,
+      resources: p?.cardPiles?.resources?.length || 0,
+      groundArena: p?.cardPiles?.groundArena?.length || 0,
+      spaceArena: p?.cardPiles?.spaceArena?.length || 0
+    }));
+  }
+
   async function handleGameState(data) {
     if (!data || !data.players) return;
 
+    const now = Date.now();
     const sid = data.id;
     if (sid && sid !== gameId && !pendingRequeue) {
       gameId = sid;
       pendingRequeue = false;
       lastStateHash = null;
+      lastActionSentTime = now;
       recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
     }
@@ -160,17 +192,35 @@ async function runBot(id, name) {
       return;
     }
 
-    // Skip if state hasn't changed since our last action (prevents infinite loops)
-    const currentHash = getActionSetHash(data);
-    if (currentHash === lastStateHash) {
+    // Stuck detection: if no action sent for STUCK_TIMEOUT ms during active game, force requeue
+    if (now - lastActionSentTime > STUCK_TIMEOUT && !pendingRequeue) {
+      console.log(`${name} *** STUCK *** no progress for ${STUCK_TIMEOUT / 1000}s, force re-queuing`);
+      console.log(`${name} last state:`, JSON.stringify(getPlayerStateSummary(data)));
+      pendingRequeue = true;
+      socket.emit('requeue');
+      setTimeout(() => {
+        pendingRequeue = false;
+        lastActionSentTime = Date.now();
+      }, 3000);
       return;
     }
+
+    // Rich hash includes phase + promptUuid + action set to prevent aliasing
+    const currentHash = computeRichHash(data);
+    if (currentHash === lastStateHash) {
+      console.log(`${name} hash skip: ${currentHash}`);
+      return;
+    }
+    console.log(`${name} hash new: ${currentHash}`);
     lastStateHash = currentHash;
 
     const action = await selectAiAction(data, SELF_PLAY_MODE);
-    if (!action) { console.log(`${name} no action`); return; }
+    if (!action) {
+      console.log(`${name} no action [${JSON.stringify(getPlayerStateSummary(data))}]`);
+      return;
+    }
 
-    console.log(`${name} action:`, getActionKey(action));
+    console.log(`${name} action: ${getActionKey(action)}`);
 
     if (recording) {
       const args = action.type === 'statefulPromptResults'
@@ -201,6 +251,7 @@ async function runBot(id, name) {
         break;
     }
 
+    lastActionSentTime = Date.now();
     await delay(200);
   }
 

@@ -304,23 +304,25 @@ async function cardToResource(state, actions) {
   const isRes = isResourcePhase(player, actions);
   if (!isRes) return null;
 
-  const used = (player?.cardPiles?.resources || []).length;
-  const leaderCost = player?.leader?.cost ?? player?.cardPiles?.leader?.[0]?.cost ?? 6;
-  if (used >= Math.max(leaderCost, 2)) return null;
-
   const hand = player?.cardPiles?.hand || [];
   const selectable = hand.filter(c => c.selectable);
   const selected = hand.filter(c => c.selected);
 
+  const used = (player?.cardPiles?.resources || []).length;
+  const leaderCost = player?.leader?.cost ?? player?.cardPiles?.leader?.[0]?.cost ?? 6;
   const needsTwo = used === 0;
   const enoughSelected = (needsTwo && selected.length >= 2) || (!needsTwo && selected.length >= 1);
 
+  // If enough cards are selected, click 'done' regardless of resource count
   if ((selectable.length === 0 && selected.length > 0) || enoughSelected) {
     const btn = actions.find(a => a.type === 'menuButton');
     return btn || null;
   }
 
+  // Need to select more cards
   if (selectable.length > 0) {
+    // Don't resource more if already have enough
+    if (used >= Math.max(leaderCost, 2)) return null;
     const unselected = selectable.filter(c => !c.selected);
     if (unselected.length === 0) {
       const btn = actions.find(a => a.type === 'menuButton');
@@ -484,7 +486,10 @@ async function selectAiAction(state, isSelfPlay) {
 
     // Try card-to-resource first
     const resourceAction = await cardToResource(state, actions);
-    if (resourceAction) return resourceAction;
+    if (resourceAction) {
+      console.log('cardToResource picked:', getActionKey(resourceAction));
+      return resourceAction;
+    }
 
     // Never choose Cancel or Close if any other option exists
     const nonCancelActions = actions.filter(a => !isCancelAction(a));
@@ -494,15 +499,21 @@ async function selectAiAction(state, isSelfPlay) {
       }
     }
 
+    console.log(`actions: ${actions.length} total [${actions.map(a => getActionKey(a)).join(', ')}]`);
+
     // Use the model to score actions
     const model = cachedModel || await loadModel();
     if (!model) {
-      // No model, pick random non-cancel action
+      console.log('NN: no model, picking random');
       return actions[Math.floor(Math.random() * actions.length)];
     }
 
     const stateTensor = encodeGameState(state);
     const actionFeatures = encodeActions(actions);
+    const scores = actionFeatures.map((af) => model.forward(stateTensor, af));
+    const bestScore = Math.max(...scores);
+    const worstScore = Math.min(...scores);
+    console.log(`NN scores: best=${bestScore.toFixed(4)} worst=${worstScore.toFixed(4)} spread=${(bestScore - worstScore).toFixed(4)}`);
     const chosen = selectBestAction(model, stateTensor, actionFeatures, actions);
     if (chosen && isCancelAction(chosen)) {
       const alternatives = actions.filter(a => !isCancelAction(a));
