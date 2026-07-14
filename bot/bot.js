@@ -1,7 +1,7 @@
 const http = require('http');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
-const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds } = require('./util');
+const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
@@ -116,6 +116,8 @@ async function runBot(id, name) {
   let firstConnect = true;
   let lastStateHash = null;
   let lastActionSentTime = Date.now();
+  let triedActionsMap = new Map();
+  let lastActionKeySent = null;
   const STUCK_TIMEOUT = 60000;
   socket.on('connect', () => {
     console.log(`${name} connected: ${socket.id}`);
@@ -164,6 +166,7 @@ async function runBot(id, name) {
       pendingRequeue = false;
       lastStateHash = null;
       lastActionSentTime = now;
+      triedActionsMap.clear();
       recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
     }
@@ -205,14 +208,28 @@ async function runBot(id, name) {
       return;
     }
 
-    // Rich hash includes phase + promptUuid + action set to prevent aliasing
+    // Smart hash dedup: if state unchanged, try next-best untried action
     const currentHash = computeRichHash(data);
-    if (currentHash === lastStateHash) {
-      console.log(`${name} hash skip: ${currentHash}`);
+    const tried = triedActionsMap.get(currentHash);
+    if (currentHash === lastStateHash && tried) {
+      // Previous action was ignored — try an untried action from remaining set
+      const allActions = getAvailableActions(data);
+      const untried = allActions.filter(a => !tried.has(getActionKey(a)));
+      if (untried.length === 0) {
+        console.log(`${name} hash exhausted (all ${tried.size} actions tried): ${currentHash}`);
+        return;
+      }
+      const fallback = untried[Math.floor(Math.random() * untried.length)];
+      tried.add(getActionKey(fallback));
+      console.log(`${name} retry (${tried.size}/${allActions.length}): ${getActionKey(fallback)}`);
+      await sendAction(fallback);
       return;
     }
+    if (currentHash !== lastStateHash) {
+      lastStateHash = currentHash;
+      triedActionsMap.delete(currentHash);
+    }
     console.log(`${name} hash new: ${currentHash}`);
-    lastStateHash = currentHash;
 
     const action = await selectAiAction(data, SELF_PLAY_MODE);
     if (!action) {
@@ -220,8 +237,17 @@ async function runBot(id, name) {
       return;
     }
 
-    console.log(`${name} action: ${getActionKey(action)}`);
+    lastActionKeySent = getActionKey(action);
+    // Initialize tried set with this action for repeat detection
+    if (!triedActionsMap.has(currentHash)) {
+      triedActionsMap.set(currentHash, new Set([lastActionKeySent]));
+    }
+    console.log(`${name} action: ${lastActionKeySent}`);
+    await sendAction(action);
+  }
 
+  async function sendAction(action) {
+    if (!action) return;
     if (recording) {
       const args = action.type === 'statefulPromptResults'
         ? [action.distribution, action.uuid]
