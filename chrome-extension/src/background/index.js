@@ -691,11 +691,11 @@ function findCardInfo(cardId, gameState) {
       if (Array.isArray(pile)) {
         for (const card of pile) {
           if ((card.uuid || card.id) === cardId) {
-            return { title: getCardName(card), pile: pileKey, cost: card.cost, power: card.power, hp: card.hp };
+            return { title: getCardName(card), pile: pileKey, cost: card.cost, power: card.power, hp: card.hp, damage: card.damage };
           }
         }
       } else if (pile && (pile.uuid || pile.id) === cardId) {
-        return { title: getCardName(pile), pile: pileKey, cost: pile.cost, power: pile.power, hp: pile.hp };
+        return { title: getCardName(pile), pile: pileKey, cost: pile.cost, power: pile.power, hp: pile.hp, damage: pile.damage };
       }
     }
     // Check player-level leader and base
@@ -703,14 +703,14 @@ function findCardInfo(cardId, gameState) {
     if (leader) {
       const leaderId = leader.uuid || leader.id;
       if (leaderId === cardId) {
-        return { title: getCardName(leader), pile: 'leader', cost: leader.cost, power: leader.power, hp: leader.hp };
+        return { title: getCardName(leader), pile: 'leader', cost: leader.cost, power: leader.power, hp: leader.hp, damage: leader.damage };
       }
     }
     const base = gameState.players[playerId]?.base;
     if (base) {
       const baseId = base.uuid || base.id;
       if (baseId === cardId) {
-        return { title: getCardName(base), pile: 'base', cost: null, power: null, hp: null };
+        return { title: getCardName(base), pile: 'base', cost: null, power: null, hp: null, damage: base.damage };
       }
     }
   }
@@ -1424,15 +1424,21 @@ async function trySequences(state) {
       let remaining = amount;
 
       for (let i = 0; i < scored.length; i++) {
+        let allocated;
         if (i === scored.length - 1) {
-          // Last target gets the remainder
-          valueDistribution.push({ uuid: scored[i].uuid, amount: remaining });
+          allocated = remaining;
         } else {
           const proportion = Math.max(0.01, scored[i].score) / totalScore;
-          const allocated = Math.max(0, Math.min(remaining, Math.round(amount * proportion)));
-          valueDistribution.push({ uuid: scored[i].uuid, amount: allocated });
-          remaining -= allocated;
+          allocated = Math.max(0, Math.min(remaining, Math.round(amount * proportion)));
         }
+        if (distributeType === 'distributeIndirectDamage') {
+          const cardInfo = findCardInfo(scored[i].uuid, state);
+          if (cardInfo && cardInfo.hp != null) {
+            allocated = Math.min(allocated, cardInfo.hp - (cardInfo.damage ?? 0));
+          }
+        }
+        valueDistribution.push({ uuid: scored[i].uuid, amount: allocated });
+        remaining -= allocated;
       }
 
       const filtered = valueDistribution.filter(d => d.amount > 0);

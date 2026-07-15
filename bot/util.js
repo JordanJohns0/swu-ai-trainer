@@ -48,25 +48,25 @@ function findCardInfo(cardId, gameState) {
       if (Array.isArray(pile)) {
         for (const card of pile) {
           if ((card.uuid || card.id) === cardId) {
-            return { title: getCardName(card), pile: pileKey, cost: card.cost, power: card.power, hp: card.hp };
+            return { title: getCardName(card), pile: pileKey, cost: card.cost, power: card.power, hp: card.hp, damage: card.damage };
           }
         }
       } else if (pile && (pile.uuid || pile.id) === cardId) {
-        return { title: getCardName(pile), pile: pileKey, cost: pile.cost, power: pile.power, hp: pile.hp };
+        return { title: getCardName(pile), pile: pileKey, cost: pile.cost, power: pile.power, hp: pile.hp, damage: pile.damage };
       }
     }
     const leader = gameState.players[playerId]?.leader;
     if (leader) {
       const leaderId = leader.uuid || leader.id;
       if (leaderId === cardId) {
-        return { title: getCardName(leader), pile: 'leader', cost: leader.cost, power: leader.power, hp: leader.hp };
+        return { title: getCardName(leader), pile: 'leader', cost: leader.cost, power: leader.power, hp: leader.hp, damage: leader.damage };
       }
     }
     const base = gameState.players[playerId]?.base;
     if (base) {
       const baseId = base.uuid || base.id;
       if (baseId === cardId) {
-        return { title: getCardName(base), pile: 'base', cost: null, power: null, hp: null };
+        return { title: getCardName(base), pile: 'base', cost: null, power: null, hp: null, damage: base.damage };
       }
     }
   }
@@ -422,7 +422,10 @@ async function trySequences(state, playerId) {
             }
             if (distributeType === 'distributeIndirectDamage') {
               const cardInfo = findCardInfo(topTargets[i].uuid, state);
-              if (cardInfo && cardInfo.hp != null) allocated = Math.min(allocated, cardInfo.hp);
+              if (cardInfo && cardInfo.hp != null) {
+                const remainingHp = cardInfo.hp - (cardInfo.damage ?? 0);
+                allocated = Math.min(allocated, remainingHp);
+              }
             }
           }
           valueDistribution.push({ uuid: topTargets[i].uuid, amount: allocated });
@@ -435,7 +438,8 @@ async function trySequences(state, playerId) {
         const lastEntry = valueDistribution[valueDistribution.length - 1];
         const cardInfo = findCardInfo(lastEntry.uuid, state);
         if (cardInfo && cardInfo.hp != null) {
-          lastEntry.amount = Math.min(lastEntry.amount, cardInfo.hp);
+          const remainingHp = cardInfo.hp - (cardInfo.damage ?? 0);
+          lastEntry.amount = Math.min(lastEntry.amount, remainingHp);
         }
         remaining = amount - valueDistribution.reduce((s, d) => s + d.amount, 0);
       }
@@ -446,7 +450,9 @@ async function trySequences(state, playerId) {
           let perTargetMax = amount;
           if (distributeType === 'distributeIndirectDamage') {
             const cardInfo = findCardInfo(valueDistribution[i].uuid, state);
-            if (cardInfo && cardInfo.hp != null) perTargetMax = cardInfo.hp;
+            if (cardInfo && cardInfo.hp != null) {
+              perTargetMax = cardInfo.hp - (cardInfo.damage ?? 0);
+            }
           }
           const headroom = perTargetMax - valueDistribution[i].amount;
           if (headroom > 0) {
@@ -475,6 +481,10 @@ async function trySequences(state, playerId) {
           return { type: 'statefulPromptResults', distribution: { type: distributeType, valueDistribution: [] }, uuid: promptUuid };
         }
         // Last resort: dump remaining on first target
+        // For indirect damage, this could exceed remaining HP — log warning
+        if (distributeType === 'distributeIndirectDamage') {
+          console.log(`distributeIndirectDamage: cannot distribute full ${amount}, ${remaining} remaining after capping`);
+        }
         filtered[0].amount += remaining;
       }
 
