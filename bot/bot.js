@@ -1,7 +1,7 @@
 const http = require('http');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
-const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState } = require('./util');
+const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState, setBotPlayerId } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
@@ -105,6 +105,7 @@ function createSocket(id, name) {
 }
 
 async function runBot(id, name) {
+  setBotPlayerId(id);
   const deck = getDeck(DECK_NAME);
 
   await enterQueue(id, name, deck);

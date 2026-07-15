@@ -239,9 +239,28 @@ function getActivePlayerId(gameState) {
 function getMyPlayerState(gameState) {
   if (!gameState || !gameState.players) return null;
   const playerIds = Object.keys(gameState.players);
-  let foundId = null;
 
-  // Self-play: check ANY player with a prompt
+  // Check the current bot's own player FIRST (critical for self-play)
+  if (botPlayerId && playerIds.includes(botPlayerId)) {
+    const ps = gameState.players[botPlayerId].promptState;
+    if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
+      currentPlayerId = botPlayerId;
+      return gameState.players[botPlayerId];
+    }
+    if (ps && ps.selectCardMode && ps.selectCardMode !== 'none') {
+      currentPlayerId = botPlayerId;
+      return gameState.players[botPlayerId];
+    }
+    if (ps && ps.buttons && ps.buttons.length > 0) {
+      currentPlayerId = botPlayerId;
+      return gameState.players[botPlayerId];
+    }
+    // Current bot has no actionable prompt — don't act for other players
+    return null;
+  }
+
+  // Only reachable before botPlayerId is set (first call): check any player
+  let foundId = null;
   for (const id of playerIds) {
     const ps = gameState.players[id].promptState;
     if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
@@ -264,18 +283,6 @@ function getMyPlayerState(gameState) {
     if (!botPlayerId) botPlayerId = foundId;
     currentPlayerId = foundId;
     return gameState.players[foundId];
-  }
-
-  // Fallback: check bot player specifically
-  if (botPlayerId) {
-    if (playerIds.includes(botPlayerId)) {
-      const ps = gameState.players[botPlayerId].promptState;
-      if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
-        currentPlayerId = botPlayerId;
-        return gameState.players[botPlayerId];
-      }
-    }
-    return null;
   }
 
   return null;
