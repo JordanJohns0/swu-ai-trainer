@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWU Bot Monitor</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e1e4eb;
+    --dim: #6b7280;
+    --accent: #22d3ee;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --bar-bg: #262a36;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+    min-height: 100vh;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  header h1 span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 16px; font-size: 12px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .status-dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .refresh-badge {
+    background: var(--card); padding: 4px 10px; border-radius: 6px;
+    border: 1px solid var(--border); font-size: 11px; color: var(--dim);
+  }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 16px; margin-bottom: 16px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 20px;
+  }
+  .card h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--dim); margin-bottom: 12px; font-weight: 500;
+  }
+  .stat-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--dim); }
+  .stat-value { font-weight: 500; }
+  .proc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .proc-table th {
+    text-align: left; padding: 4px 8px; color: var(--dim);
+    font-weight: 500; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.5px; border-bottom: 1px solid var(--border);
+  }
+  .proc-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .proc-table tr:last-child td { border-bottom: none; }
+  .proc-name { display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+  .badge-running { background: rgba(52,211,153,0.15); color: var(--green); }
+  .badge-stopped { background: rgba(248,113,113,0.15); color: var(--red); }
+  .empty-state {
+    text-align: center; padding: 24px; color: var(--dim); font-size: 13px;
+  }
+  .mem-bar {
+    width: 100%; height: 6px; background: var(--bar-bg); border-radius: 3px;
+    margin-top: 4px; overflow: hidden;
+  }
+  .mem-bar-fill {
+    height: 100%; border-radius: 3px; transition: width 0.5s ease;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+  }
+  .mem-bar-fill.high { background: linear-gradient(90deg, var(--yellow), var(--red)); }
+  .timestamp { font-size: 11px; color: var(--dim); margin-top: 16px; text-align: center; }
+  .no-bots { color: var(--dim); font-size: 13px; padding: 8px 0; }
+  .footer-bar {
+    display: flex; justify-content: center; gap: 24px; margin-top: 8px;
+    font-size: 11px; color: var(--dim);
+  }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    .grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; gap: 8px; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SWU <span>Bot Monitor</span></h1>
+  <div class="header-right">
+    <span id="sshStatus"><span class="status-dot yellow"></span> connecting...</span>
+    <span class="refresh-badge" id="refreshBadge">5s</span>
+  </div>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h2>Bot Processes</h2>
+    <div id="botProcesses">
+      <div class="no-bots">Connecting to server...</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Training Stats</h2>
+    <div id="trainingStats">
+      <div class="stat-row"><span class="stat-label">Games Trained</span><span class="stat-value" id="gamesTrained">-</span></div>
+      <div class="stat-row"><span class="stat-label">Last Trained</span><span class="stat-value" id="lastTrained">-</span></div>
+      <div class="stat-row"><span class="stat-label">Accuracy</span><span class="stat-value" id="accuracy">-</span></div>
+      <div class="stat-row"><span class="stat-label">Examples</span><span class="stat-value" id="examples">-</span></div>
+      <div class="stat-row"><span class="stat-label">Recordings</span><span class="stat-value" id="recordings">-</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Server Health</h2>
+    <div id="serverHealth">
+      <div class="stat-row"><span class="stat-label">Load (1/5/15m)</span><span class="stat-value" id="loadAvg">-</span></div>
+      <div class="stat-row" style="flex-direction:column; align-items:stretch; gap:4px;">
+        <div style="display:flex; justify-content:space-between;">
+          <span class="stat-label">Memory</span>
+          <span class="stat-value" id="memory">-</span>
+        </div>
+        <div class="mem-bar"><div class="mem-bar-fill" id="memBar" style="width:0%"></div></div>
+      </div>
+      <div class="stat-row"><span class="stat-label">Boot Time</span><span class="stat-value" id="bootTime">-</span></div>
+      <div class="stat-row"><span class="stat-label">Weights Updated</span><span class="stat-value" id="weightsUpdated">-</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer-bar">
+  <span>SSH: <span id="sshHost">192.168.1.157</span></span>
+  <span id="lastUpdated">Last updated: -</span>
+</div>
+
+<script>
+const REFRESH_INTERVAL = 5;
+let countdown = REFRESH_INTERVAL;
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function fmtTime(ts) {
+  if (!ts) return 'never';
+  const d = new Date(ts);
+  const now = Date.now();
+  const diff = now - ts;
+  if (diff < 5000) return 'just now';
+  if (diff < 60000) return Math.floor(diff / 1000) + 's ago';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  return d.toLocaleDateString() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+function fmtUptime(bootTime) {
+  if (!bootTime) return '-';
+  const boot = new Date(bootTime);
+  const sec = Math.floor((Date.now() - boot.getTime()) / 1000);
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
+
+async function fetchStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return await resp.json();
+  } catch (e) {
+    document.getElementById('sshStatus').innerHTML =
+      '<span class="status-dot red"></span> error: ' + e.message;
+    return null;
+  }
+}
+
+function render(data) {
+  if (!data) return;
+
+  // SSH status
+  const sshEl = document.getElementById('sshStatus');
+  if (data.sshOk) {
+    sshEl.innerHTML = '<span class="status-dot green"></span> connected';
+  } else {
+    sshEl.innerHTML = '<span class="status-dot red"></span> ' + (data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
+  }
+
+  // Bot processes
+  const bpEl = document.getElementById('botProcesses');
+  if (!data.processes || data.processes.length === 0) {
+    bpEl.innerHTML = '<div class="no-bots">No bot processes found</div>';
+  } else {
+    let html = '<table class="proc-table"><tr><th>Name</th><th>PID</th><th>CPU%</th><th>MEM%</th><th>Time</th></tr>';
+    for (const p of data.processes) {
+      html += '<tr>' +
+        '<td><div class="proc-name"><span class="status-dot green"></span>' + p.name + '</div></td>' +
+        '<td>' + p.pid + '</td>' +
+        '<td>' + p.cpu + '</td>' +
+        '<td>' + p.mem + '</td>' +
+        '<td>' + p.time + '</td>' +
+        '</tr>';
+    }
+    html += '</table>';
+    bpEl.innerHTML = html;
+  }
+
+  // Training stats
+  const s = data.stats;
+  document.getElementById('gamesTrained').textContent = s.gamesTrained || 0;
+  document.getElementById('lastTrained').textContent = fmtTime(s.lastTrainedAt);
+  const acc = (s.accuracy !== undefined && s.accuracy !== null) ? (s.accuracy * 100).toFixed(2) + '%' : '-';
+  document.getElementById('accuracy').textContent = acc;
+  document.getElementById('examples').textContent = s.examples || 0;
+  document.getElementById('recordings').textContent = data.recordingsCount || 0;
+
+  // Server health
+  const sv = data.server;
+  if (sv && sv.load) {
+    document.getElementById('loadAvg').textContent =
+      sv.load['1m'] + ' / ' + sv.load['5m'] + ' / ' + sv.load['15m'];
+  } else {
+    document.getElementById('loadAvg').textContent = '-';
+  }
+
+  if (sv && sv.memory) {
+    const mem = sv.memory;
+    document.getElementById('memory').textContent =
+      mem.used + 'MB / ' + mem.total + 'MB';
+    const pct = Math.min(100, (parseInt(mem.used) / parseInt(mem.total)) * 100);
+    const bar = document.getElementById('memBar');
+    bar.style.width = pct + '%';
+    bar.className = 'mem-bar-fill' + (pct > 80 ? ' high' : '');
+  } else {
+    document.getElementById('memory').textContent = '-';
+  }
+
+  document.getElementById('bootTime').textContent = sv && sv.bootTime ? fmtUptime(sv.bootTime) : '-';
+  document.getElementById('weightsUpdated').textContent = fmtTime(data.weightsModified);
+
+  document.getElementById('lastUpdated').textContent =
+    'Last updated: ' + fmtTime(data.timestamp);
+}
+
+async function refresh() {
+  const data = await fetchStatus();
+  render(data);
+}
+
+function tick() {
+  countdown--;
+  if (countdown <= 0) {
+    countdown = REFRESH_INTERVAL;
+    refresh();
+  }
+  document.getElementById('refreshBadge').textContent = countdown + 's';
+}
+
+document.getElementById('sshHost').textContent = 'jordan@' + (new URLSearchParams(location.search).get('host') || '192.168.1.157');
+refresh();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
