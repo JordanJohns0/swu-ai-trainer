@@ -91,21 +91,9 @@
     font-family: inherit;
   }
   .bot-remove:hover { background: rgba(248,113,113,0.15); }
-  .bot-deck-select {
-    width: 100%; margin-top: 6px;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 6px; color: var(--text); font-size: 10px; font-family: inherit;
-    cursor: pointer;
-  }
-  .bot-deck-select:focus { outline: none; border-color: var(--accent); }
+  .bot-deck-name { color: var(--dim); font-size: 10px; margin-left: 4px; }
 
-  .add-bot-area { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
-  .add-bot-area input {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-    padding: 6px 10px; color: var(--text); font-size: 12px; font-family: inherit;
-    flex: 1;
-  }
-  .add-bot-area input:focus { outline: none; border-color: var(--accent); }
+  /* .add-bot-area removed — driver auto-spawns per deck */
   .btn {
     background: var(--accent); color: #000; border: none; border-radius: 4px;
     padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
@@ -183,7 +171,7 @@
     .grid { grid-template-columns: 1fr; }
     header { flex-direction: column; gap: 8px; align-items: flex-start; }
     .bot-cards { flex-direction: column; }
-    .add-bot-area { flex-direction: column; }
+    /* .add-bot-area removed */
   }
 </style>
 </head>
@@ -193,6 +181,7 @@
   <h1>SWU <span>Bot Monitor</span></h1>
   <div class="header-right">
     <span id="sshStatus"><span class="status-dot yellow"></span> connecting...</span>
+    <span id="driverStatus"><span class="status-dot yellow"></span> driver...</span>
     <span class="refresh-badge" id="refreshBadge">5s</span>
   </div>
 </header>
@@ -200,10 +189,6 @@
 <div class="grid">
   <div class="card">
     <h2>Bot Processes</h2>
-    <div class="add-bot-area">
-      <input type="text" id="botNameInput" placeholder="Bot-3" value="Bot-3">
-      <button class="btn" id="addBotBtn">+ Add</button>
-    </div>
     <div id="trainingBanner"></div>
     <div id="botStatuses">
       <div class="bot-empty">Connecting to server...</div>
@@ -309,15 +294,11 @@ function stateClass(s) {
   }
 }
 
-function renderBotCard(bot, decks, botDecks) {
+function renderBotCard(bot) {
   const stale = (Date.now() - bot.updatedAt) > 60000;
   const dotColor = stale ? 'yellow' : stateDot(bot.state);
   const botNameEsc = escHtml(bot.name);
-  const currentDeck = botDecks && botDecks[bot.name] ? botDecks[bot.name] : '';
-  const opts = '<option value="">(default)</option>' + decks.map(d =>
-    '<option value="' + escHtml(d.name) + '"' +
-    (d.name === currentDeck ? ' selected' : '') + '>' + escHtml(d.name) + '</option>'
-  ).join('');
+  const deckNameEsc = bot.deckName ? escHtml(' [' + bot.deckName + ']') : '';
   let detail = '';
   if (bot.state === 'in_game') {
     detail += '<div>vs <strong>' + escHtml(bot.opponent || '?') + '</strong></div>';
@@ -327,10 +308,10 @@ function renderBotCard(bot, decks, botDecks) {
     '<div class="bot-card-header">' +
       '<span class="status-dot ' + dotColor + '"></span>' +
       '<span class="bot-name">' + botNameEsc + '</span>' +
+      '<span class="bot-deck-name">' + deckNameEsc + '</span>' +
     '</div>' +
     '<div class="bot-state ' + stateClass(bot.state) + '">' + stateLabel(bot.state) + '</div>' +
     '<div class="bot-detail">' + detail + '</div>' +
-    '<select class="bot-deck-select" data-bot="' + botNameEsc + '">' + opts + '</select>' +
     '<div class="bot-time">' + fmtTime(bot.updatedAt) + '</div>' +
   '</div>';
 }
@@ -436,6 +417,16 @@ async function refresh() {
     sshEl.innerHTML = '<span class="status-dot red"></span> ' + escHtml(data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
   }
 
+  // Driver status
+  const drvEl = document.getElementById('driverStatus');
+  if (data.driverOk) {
+    drvEl.innerHTML = '<span class="status-dot green"></span> driver';
+  } else if (data.driverError) {
+    drvEl.innerHTML = '<span class="status-dot red"></span> ' + escHtml(data.driverError.substring(0, 40));
+  } else {
+    drvEl.innerHTML = '<span class="status-dot yellow"></span> driver';
+  }
+
   // Separate bots from trainer
   const bots = (data.bots || []).filter(b => b.id !== '_trainer');
   const trainer = (data.bots || []).find(b => b.id === '_trainer');
@@ -454,7 +445,7 @@ async function refresh() {
     bpEl.innerHTML = '<div class="bot-empty">No bot processes found</div>';
   } else {
     bpEl.innerHTML = '<div class="bot-cards">' +
-      bots.map(b => renderBotCard(b, decks, data.botDecks)).join('') + '</div>';
+      bots.map(b => renderBotCard(b)).join('') + '</div>';
 
     // Remove handlers
     document.querySelectorAll('.bot-remove').forEach(btn => {
@@ -464,21 +455,6 @@ async function refresh() {
         btn.disabled = true; btn.textContent = '...';
         try { await fetchJSON('/api/bots/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); } catch {}
         refresh();
-      });
-    });
-
-    // Deck change handlers
-    document.querySelectorAll('.bot-deck-select').forEach(sel => {
-      sel.addEventListener('change', async () => {
-        const botName = sel.dataset.bot;
-        const deckName = sel.value;
-        try {
-          await fetchJSON('/api/bots/deck', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ botName, deckName })
-          });
-        } catch {}
       });
     });
   }
@@ -534,30 +510,7 @@ function tick() {
   document.getElementById('refreshBadge').textContent = countdown + 's';
 }
 
-// Add bot
-document.getElementById('addBotBtn').addEventListener('click', async () => {
-  const input = document.getElementById('botNameInput');
-  const name = input.value.trim();
-  if (!name) return;
-  const btn = document.getElementById('addBotBtn');
-  btn.disabled = true; btn.textContent = 'Adding...';
-  try {
-    const result = await fetchJSON('/api/bots/add', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
-    });
-    if (result.ok) {
-      input.value = '';
-      const m = name.match(/^Bot-(\d+)$/);
-      if (m) input.value = 'Bot-' + (parseInt(m[1]) + 1);
-    } else { alert('Failed: ' + (result.error || 'unknown')); }
-  } catch (e) { alert('Error: ' + e.message); }
-  btn.disabled = false; btn.textContent = '+ Add';
-  refresh();
-});
-document.getElementById('botNameInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('addBotBtn').click();
-});
+// (Add-bot removed — driver auto-spawns one bot per custom deck)
 
 // Add deck
 document.getElementById('addDeckBtn').addEventListener('click', async () => {

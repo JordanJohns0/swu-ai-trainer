@@ -7,8 +7,9 @@ const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, ge
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
-const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
+const SERVER_URL = process.env.SERVER_URL || 'http://localhost:9500';
 const BOT_NAME = process.env.BOT_NAME || 'Bot';
+const BOT_ID = process.env.BOT_ID || 'bot1';
 const DECK_NAME = process.env.DECK_NAME || 'cad-bane';
 const SELF_PLAY_MODE = process.env.SELF_PLAY === 'true' || process.env.SELF_PLAY === '1';
 const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '10', 10);
@@ -393,8 +394,12 @@ async function main() {
   if (SELF_PLAY_MODE) {
     await Promise.all([startBot('bot1', 'Bot-1'), startBot('bot2', 'Bot-2')]);
   } else {
-    await startBot('bot1', BOT_NAME);
+    await startBot(BOT_ID, BOT_NAME);
   }
 }
 
-main().catch(e => { console.error('Fatal:', e); process.exit(1); });
+if (require.main === module) {
+  main().catch(e => { console.error('Fatal:', e); process.exit(1); });
+}
+
+module.exports = { startBot, runBot, runTraining };
