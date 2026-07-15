@@ -1,6 +1,6 @@
 const http = require('http');
 const io = require('socket.io-client');
-const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
+const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats, saveBotStatus } = require('./storage');
 const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
@@ -65,6 +65,7 @@ async function enterQueue(id, name, deck) {
   const result = await httpPost('/api/enter-queue', body);
   if (result.ok) {
     console.log(`${name} entered queue`);
+    await saveBotStatus(id, name, { state: 'queuing', message: 'Entered queue' }).catch(() => {});
   } else {
     console.error(`${name} queue failed:`, result.status, result.body);
     throw new Error(`Queue status ${result.status}`);
@@ -125,6 +126,7 @@ async function runBot(id, name) {
   const STUCK_TIMEOUT = 60000;
   socket.on('connect', () => {
     console.log(`${name} connected: ${socket.id}`);
+    saveBotStatus(id, name, { state: 'in_queue', message: 'Connected, waiting for match' }).catch(() => {});
     if (!firstConnect && !gameId) {
       console.log(`${name} reconnected, requeuing`);
       socket.emit('requeue');
@@ -173,6 +175,8 @@ async function runBot(id, name) {
       triedActionsMap.clear();
       recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
+      const opponent = Object.entries(data.players || {}).find(([pid]) => pid !== id)?.[1]?.username || null;
+      saveBotStatus(id, name, { state: 'in_game', gameId: sid, phase: data.phase, opponent, message: 'Game started' }).catch(() => {});
     }
     if (!recording) return;
 
@@ -184,6 +188,7 @@ async function runBot(id, name) {
       recording.winner = data.winners;
       recording.completedAt = Date.now();
       console.log(`${name} game ended. Winner:`, data.winners);
+      await saveBotStatus(id, name, { state: 'requeuing', message: `Game ended, winner: ${data.winners}` }).catch(() => {});
       await saveGameRecording(recording).catch(() => {});
       gamesPlayed++;
       recording = null;
@@ -195,6 +200,7 @@ async function runBot(id, name) {
       setTimeout(() => {
         socket.emit('requeue');
         console.log(`${name} requeued`);
+        saveBotStatus(id, name, { state: 'in_queue', message: 'Requeued' }).catch(() => {});
         pendingRequeue = false;
       }, 3000);
       return;
@@ -204,6 +210,7 @@ async function runBot(id, name) {
     if (now - lastActionSentTime > STUCK_TIMEOUT && !pendingRequeue) {
       console.log(`${name} *** STUCK *** no progress for ${STUCK_TIMEOUT / 1000}s, force re-queuing`);
       console.log(`${name} last state:`, JSON.stringify(getPlayerStateSummary(data)));
+      saveBotStatus(id, name, { state: 'stuck', message: 'Stuck, force requeue' }).catch(() => {});
       pendingRequeue = true;
       socket.emit('requeue');
       setTimeout(() => {
@@ -269,6 +276,7 @@ async function runBot(id, name) {
       triedActionsMap.set(currentHash, new Set([lastActionKeySent]));
     }
     console.log(`${name} action: ${lastActionKeySent}`);
+    await saveBotStatus(id, name, { state: 'in_game', gameId, phase: data.phase, opponent: Object.entries(data.players || {}).find(([pid]) => pid !== id)?.[1]?.username || null, message: lastActionKeySent }).catch(() => {});
     await sendAction(action);
   }
 
@@ -320,6 +328,7 @@ async function runBot(id, name) {
 
 async function runTraining() {
   console.log('Batch training...');
+  await saveBotStatus('training', 'Trainer', { state: 'training', message: 'Batch training in progress' }).catch(() => {});
   const recordings = await loadGameRecordings();
   if (recordings.length === 0) return;
 
@@ -337,6 +346,7 @@ async function runTraining() {
   stats.accuracy = acc;
   await saveTrainingStats(stats);
   console.log(`Training done: pref_acc=${(acc * 100).toFixed(2)}%`);
+  await saveBotStatus('training', 'Trainer', { state: 'idle', message: `Training done, acc=${(acc * 100).toFixed(2)}%` }).catch(() => {});
 }
 
 async function startBot(id, name) {

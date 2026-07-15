@@ -32,25 +32,12 @@ async function readFile(relPath) {
   try { return JSON.parse(r.data); } catch { return null; }
 }
 
-async function getProcesses() {
-  const r = await sshCmd('ps aux | grep -v grep | grep node.*bot');
+async function getBotStatuses() {
+  const r = await sshCmd(`for f in ${DATA_PATH}/bot_status_*.json; do [ -f "$f" ] && cat "$f" && echo "===BOTSTATUS==="; done`);
   if (!r.ok || !r.data) return [];
-  return r.data.split('\n').filter(Boolean).map(line => {
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 11) return null;
-    const cmd = parts.slice(10).join(' ');
-    return {
-      user: parts[0],
-      pid: parts[1],
-      cpu: parts[2],
-      mem: parts[3],
-      vsz: parts[4],
-      rss: parts[5],
-      start: parts[8],
-      time: parts[9],
-      cmd,
-      name: cmd.includes('bot1') ? 'Bot-1' : cmd.includes('bot2') ? 'Bot-2' : 'bot'
-    };
+  const parts = r.data.split('===BOTSTATUS===').filter(Boolean);
+  return parts.map(p => {
+    try { return JSON.parse(p.trim()); } catch { return null; }
   }).filter(Boolean);
 }
 
@@ -107,11 +94,11 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   if (url.pathname === '/api/status') {
-    const [sshCheck, stats, recordingsCount, processes, serverInfo, weightsMtime, recordingsMtime] = await Promise.all([
+    const [sshCheck, stats, recordingsCount, botStatuses, serverInfo, weightsMtime, recordingsMtime] = await Promise.all([
       sshCmd('echo ok'),
       readFile('stats.json'),
       getArrayLength('recordings.json'),
-      getProcesses(),
+      getBotStatuses(),
       getServerInfo(),
       getFileMtime('weights.json'),
       getFileMtime('recordings.json')
@@ -123,7 +110,7 @@ const server = http.createServer(async (req, res) => {
       recordingsCount,
       weightsModified: weightsMtime || null,
       recordingsModified: recordingsMtime || null,
-      processes,
+      bots: botStatuses,
       server: serverInfo,
       sshOk: sshCheck.ok,
       sshError: sshCheck.ok ? null : sshCheck.error

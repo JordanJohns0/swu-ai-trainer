@@ -15,6 +15,7 @@
     --green: #34d399;
     --red: #f87171;
     --yellow: #fbbf24;
+    --orange: #fb923c;
     --bar-bg: #262a36;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -33,16 +34,17 @@
   header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
   header h1 span { color: var(--accent); }
   .header-right { display: flex; align-items: center; gap: 16px; font-size: 12px; }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
   .status-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
   .status-dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
   .status-dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .status-dot.orange { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
   .refresh-badge {
     background: var(--card); padding: 4px 10px; border-radius: 6px;
     border: 1px solid var(--border); font-size: 11px; color: var(--dim);
   }
   .grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
     gap: 16px; margin-bottom: 16px;
   }
   .card {
@@ -60,21 +62,51 @@
   .stat-row:last-child { border-bottom: none; }
   .stat-label { color: var(--dim); }
   .stat-value { font-weight: 500; }
-  .proc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .proc-table th {
-    text-align: left; padding: 4px 8px; color: var(--dim);
-    font-weight: 500; font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.5px; border-bottom: 1px solid var(--border);
+
+  .bot-cards {
+    display: flex; flex-wrap: wrap; gap: 12px;
   }
-  .proc-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
-  .proc-table tr:last-child td { border-bottom: none; }
-  .proc-name { display: flex; align-items: center; gap: 8px; }
-  .badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
-  .badge-running { background: rgba(52,211,153,0.15); color: var(--green); }
-  .badge-stopped { background: rgba(248,113,113,0.15); color: var(--red); }
-  .empty-state {
-    text-align: center; padding: 24px; color: var(--dim); font-size: 13px;
+  .bot-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    min-width: 200px;
+    flex: 1 1 200px;
   }
+  .bot-card-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .bot-name {
+    font-size: 14px; font-weight: 600;
+  }
+  .bot-state {
+    font-size: 20px; font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .bot-state.ingame { color: var(--accent); }
+  .bot-state.inqueue { color: var(--green); }
+  .bot-state.queuing { color: var(--yellow); }
+  .bot-state.training { color: var(--orange); }
+  .bot-state.stuck { color: var(--red); }
+  .bot-state.requeuing { color: var(--yellow); }
+  .bot-state.starting { color: var(--dim); }
+  .bot-state.unknown { color: var(--dim); }
+  .bot-detail {
+    font-size: 12px; color: var(--dim);
+    line-height: 1.6;
+  }
+  .bot-detail strong { color: var(--text); font-weight: 500; }
+  .bot-time {
+    font-size: 10px; color: var(--dim);
+    margin-top: 6px;
+  }
+  .bot-empty {
+    color: var(--dim); font-size: 13px;
+    padding: 8px 0;
+  }
+
   .mem-bar {
     width: 100%; height: 6px; background: var(--bar-bg); border-radius: 3px;
     margin-top: 4px; overflow: hidden;
@@ -85,7 +117,6 @@
   }
   .mem-bar-fill.high { background: linear-gradient(90deg, var(--yellow), var(--red)); }
   .timestamp { font-size: 11px; color: var(--dim); margin-top: 16px; text-align: center; }
-  .no-bots { color: var(--dim); font-size: 13px; padding: 8px 0; }
   .footer-bar {
     display: flex; justify-content: center; gap: 24px; margin-top: 8px;
     font-size: 11px; color: var(--dim);
@@ -94,6 +125,7 @@
     body { padding: 12px; }
     .grid { grid-template-columns: 1fr; }
     header { flex-direction: column; gap: 8px; align-items: flex-start; }
+    .bot-cards { flex-direction: column; }
   }
 </style>
 </head>
@@ -110,8 +142,8 @@
 <div class="grid">
   <div class="card">
     <h2>Bot Processes</h2>
-    <div id="botProcesses">
-      <div class="no-bots">Connecting to server...</div>
+    <div id="botStatuses">
+      <div class="bot-empty">Connecting to server...</div>
     </div>
   </div>
 
@@ -161,8 +193,8 @@ function fmtTime(ts) {
   const diff = now - ts;
   if (diff < 5000) return 'just now';
   if (diff < 60000) return Math.floor(diff / 1000) + 's ago';
-  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-  return d.toLocaleDateString() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  if (diff < 3600000) { const m = Math.floor(diff / 60000); return m + 'm ago'; }
+  return d.toLocaleDateString() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
 function fmtUptime(bootTime) {
@@ -175,6 +207,73 @@ function fmtUptime(bootTime) {
   if (d > 0) return d + 'd ' + h + 'h';
   if (h > 0) return h + 'h ' + m + 'm';
   return m + 'm';
+}
+
+function stateDot(state) {
+  switch (state) {
+    case 'in_game': return 'green';
+    case 'in_queue': return 'green';
+    case 'queuing': return 'yellow';
+    case 'requeuing': return 'yellow';
+    case 'training': return 'orange';
+    case 'starting': return 'yellow';
+    case 'stuck': return 'red';
+    default: return 'yellow';
+  }
+}
+
+function stateLabel(state) {
+  switch (state) {
+    case 'in_game': return 'In Game';
+    case 'in_queue': return 'In Queue';
+    case 'queuing': return 'Queuing';
+    case 'requeuing': return 'Requeuing';
+    case 'training': return 'Training';
+    case 'starting': return 'Starting';
+    case 'stuck': return 'Stuck';
+    default: return state;
+  }
+}
+
+function stateClass(state) {
+  switch (state) {
+    case 'in_game': return 'ingame';
+    case 'in_queue': return 'inqueue';
+    case 'queuing': return 'queuing';
+    case 'requeuing': return 'requeuing';
+    case 'training': return 'training';
+    case 'starting': return 'starting';
+    case 'stuck': return 'stuck';
+    default: return 'unknown';
+  }
+}
+
+function renderBotCard(bot) {
+  const stale = (Date.now() - bot.updatedAt) > 60000;
+  const dotColor = stale ? 'yellow' : stateDot(bot.state);
+  let detail = '';
+
+  if (bot.state === 'in_game') {
+    detail += '<div>vs <strong>' + (bot.opponent || '?') + '</strong></div>';
+    detail += '<div>phase: <strong>' + (bot.phase || '?') + '</strong></div>';
+    if (bot.message && bot.message.length > 0) {
+      detail += '<div>action: <strong>' + bot.message.substring(0, 50) + '</strong></div>';
+    }
+  } else if (bot.message) {
+    detail += '<div>' + bot.message + '</div>';
+  }
+
+  return '<div class="bot-card">' +
+    '<div class="bot-card-header">' +
+      '<span class="status-dot ' + dotColor + '"></span>' +
+      '<span class="bot-name">' + bot.name + '</span>' +
+    '</div>' +
+    '<div class="bot-state ' + stateClass(bot.state) + '">' +
+      stateLabel(bot.state) +
+    '</div>' +
+    '<div class="bot-detail">' + detail + '</div>' +
+    '<div class="bot-time">' + fmtTime(bot.updatedAt) + '</div>' +
+  '</div>';
 }
 
 async function fetchStatus() {
@@ -192,7 +291,6 @@ async function fetchStatus() {
 function render(data) {
   if (!data) return;
 
-  // SSH status
   const sshEl = document.getElementById('sshStatus');
   if (data.sshOk) {
     sshEl.innerHTML = '<span class="status-dot green"></span> connected';
@@ -200,23 +298,12 @@ function render(data) {
     sshEl.innerHTML = '<span class="status-dot red"></span> ' + (data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
   }
 
-  // Bot processes
-  const bpEl = document.getElementById('botProcesses');
-  if (!data.processes || data.processes.length === 0) {
-    bpEl.innerHTML = '<div class="no-bots">No bot processes found</div>';
+  // Bot status cards
+  const bpEl = document.getElementById('botStatuses');
+  if (!data.bots || data.bots.length === 0) {
+    bpEl.innerHTML = '<div class="bot-empty">No bot processes found</div>';
   } else {
-    let html = '<table class="proc-table"><tr><th>Name</th><th>PID</th><th>CPU%</th><th>MEM%</th><th>Time</th></tr>';
-    for (const p of data.processes) {
-      html += '<tr>' +
-        '<td><div class="proc-name"><span class="status-dot green"></span>' + p.name + '</div></td>' +
-        '<td>' + p.pid + '</td>' +
-        '<td>' + p.cpu + '</td>' +
-        '<td>' + p.mem + '</td>' +
-        '<td>' + p.time + '</td>' +
-        '</tr>';
-    }
-    html += '</table>';
-    bpEl.innerHTML = html;
+    bpEl.innerHTML = '<div class="bot-cards">' + data.bots.map(renderBotCard).join('') + '</div>';
   }
 
   // Training stats
@@ -270,7 +357,6 @@ function tick() {
   document.getElementById('refreshBadge').textContent = countdown + 's';
 }
 
-document.getElementById('sshHost').textContent = 'jordan@' + (new URLSearchParams(location.search).get('host') || '192.168.1.157');
 refresh();
 setInterval(tick, 1000);
 </script>
