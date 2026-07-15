@@ -1,35 +1,39 @@
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
-const SSH_HOST = (process.env.SSH_HOST || '192.168.1.157').trim();
-const SSH_USER = (process.env.SSH_USER || 'jordan').trim();
+const SSH_HOST = (process.env.MONITOR_SSH_HOST || '192.168.1.157').trim();
+const SSH_USER = (process.env.MONITOR_SSH_USER || 'jordan').trim();
 const DATA_PATH = process.env.DATA_PATH || '/home/jordan/swu/swu-ai-trainer/server/data';
 const PORT = parseInt(process.env.PORT || '3456', 10);
 
 async function sshCmd(cmd) {
-  const fullCmd = `ssh -o ConnectTimeout=5 -o BatchMode=yes ${SSH_USER}@${SSH_HOST} "${cmd.replace(/"/g, '\\"')}"`;
   try {
-    const { stdout } = await execAsync(fullCmd, { timeout: 15000, shell: true });
+    const args = [
+      '-o', 'ConnectTimeout=5',
+      '-o', 'BatchMode=yes',
+      `${SSH_USER}@${SSH_HOST}`,
+      cmd
+    ];
+    const { stdout } = await execFileAsync('ssh', args, { timeout: 15000 });
     return { ok: true, data: stdout.trimEnd() };
   } catch (e) {
     return { ok: false, error: e.stderr?.trim() || e.message };
   }
 }
 
-// Individual SSH calls for each piece of data
 async function readFile(relPath) {
-  const r = await sshCmd(`cat ${DATA_PATH}/${relPath} 2>/dev/null || echo ""`);
+  const r = await sshCmd(`cat ${DATA_PATH}/${relPath} 2>/dev/null; echo`);
   if (!r.ok) return null;
   try { return JSON.parse(r.data); } catch { return null; }
 }
 
 async function getProcesses() {
-  const r = await sshCmd(`ps aux | grep -v grep | grep "node.*bot"`);
+  const r = await sshCmd('ps aux | grep -v grep | grep node.*bot');
   if (!r.ok || !r.data) return [];
   return r.data.split('\n').filter(Boolean).map(line => {
     const parts = line.trim().split(/\s+/);
@@ -51,37 +55,43 @@ async function getProcesses() {
 }
 
 async function getArrayLength(relPath) {
-  const r = await sshCmd(`node -e "try{const d=require('${DATA_PATH}/${relPath}');console.log(d.length||0)}catch(e){console.log(0)}" 2>/dev/null || echo "0"`);
+  const r = await sshCmd(`grep -c '"gameId"' ${DATA_PATH}/${relPath} 2>/dev/null || echo 0`);
   if (!r.ok) return 0;
   return parseInt(r.data, 10) || 0;
 }
 
 async function getFileMtime(relPath) {
-  const r = await sshCmd(`stat -c %Y ${DATA_PATH}/${relPath} 2>/dev/null || echo "0"`);
+  const r = await sshCmd(`stat -c %Y ${DATA_PATH}/${relPath} 2>/dev/null; echo 0`);
   if (!r.ok) return 0;
-  return parseInt(r.data, 10) * 1000;
+  const lines = r.data.split('\n').filter(Boolean);
+  const val = parseInt(lines[0], 10);
+  return val > 0 ? val * 1000 : 0;
 }
 
 async function getServerInfo() {
   const [loadR, memR, uptimeR] = await Promise.all([
-    sshCmd(`cat /proc/loadavg 2>/dev/null || echo ""`),
+    sshCmd('cat /proc/loadavg 2>/dev/null; echo'),
     sshCmd(`free -m | awk 'NR==2{print $2" "$3" "$4" "$7}'`),
-    sshCmd(`uptime -s 2>/dev/null || echo ""`)
+    sshCmd('uptime -s 2>/dev/null; echo')
   ]);
 
   let load = null;
   if (loadR.ok && loadR.data) {
     const p = loadR.data.split(' ');
-    load = { '1m': p[0], '5m': p[1], '15m': p[2], running: p[3], total: p[4] };
+    if (p.length >= 3) {
+      load = { '1m': p[0], '5m': p[1], '15m': p[2] };
+    }
   }
 
   let memory = null;
   if (memR.ok && memR.data) {
     const p = memR.data.split(' ');
-    memory = { total: p[0], used: p[1], free: p[2], avail: p[3] };
+    if (p.length >= 4) {
+      memory = { total: p[0], used: p[1], free: p[2], avail: p[3] };
+    }
   }
 
-  return { load, memory, bootTime: uptimeR.ok ? uptimeR.data : null };
+  return { load, memory, bootTime: uptimeR.ok && uptimeR.data ? uptimeR.data : null };
 }
 
 const mimeTypes = {
@@ -127,7 +137,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Serve static files
   let filePath = path.join(__dirname, url.pathname === '/' ? 'index.html' : url.pathname);
   const ext = path.extname(filePath);
 
