@@ -19,6 +19,22 @@ let lastPostTime = 0;
 let driverOk = false;
 let driverErr = null;
 
+// Log ring buffer
+const MAX_LOG_ENTRIES = 500;
+const logEntries = [];
+
+function addLog(level, msg) {
+  const t = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  logEntries.push({ t, level, msg: String(msg).substring(0, 2000) });
+  if (logEntries.length > MAX_LOG_ENTRIES) logEntries.splice(0, logEntries.length - MAX_LOG_ENTRIES);
+}
+
+// Intercept console.log/error to capture in ring buffer
+const _origLog = console.log.bind(console);
+const _origError = console.error.bind(console);
+console.log = function (...args) { addLog('info', args.join(' ')); _origLog(...args); };
+console.error = function (...args) { addLog('error', args.join(' ')); _origError(...args); };
+
 function log(...args) {
   const t = new Date().toISOString().replace('T', ' ').substring(0, 19);
   console.log(`[${t}]`, ...args);
@@ -411,6 +427,12 @@ const server = http.createServer(async (req, res) => {
       driverOk,
       driverError: driverErr
     });
+    return;
+  }
+
+  if (url.pathname === '/api/logs' && method === 'GET') {
+    const n = parseInt(url.searchParams.get('n') || '100', 10);
+    sendJSON(res, 200, { logs: logEntries.slice(-n) });
     return;
   }
 

@@ -1,19 +1,20 @@
 const storage = require('./storage');
-const bot = require('./bot');
 
-console.log(`[WORKER] process.send=${typeof process.send}, pid=${process.pid}`);
-
+// Patch BEFORE bot.js loads — monkey-patch must be in place before
+// bot.js does const { saveBotStatus } = require('./storage')
 const origSaveBotStatus = storage.saveBotStatus.bind(storage);
 storage.saveBotStatus = async function (id, name, status) {
   if (typeof process.send === 'function') {
-    const msg = { type: 'status', id, name, ...status };
-    const sent = process.send(msg);
-    console.log(`[WORKER] IPC sent for ${name}: ${status.state} (queued=${sent})`);
-  } else {
-    console.log(`[WORKER] process.send not available for ${name}`);
+    try {
+      process.send({ type: 'status', id, name, ...status });
+    } catch (e) {
+      console.error(`[WORKER] IPC send failed: ${e.message}`);
+    }
   }
   return origSaveBotStatus(id, name, status);
 };
+
+const bot = require('./bot');
 
 const id = process.env.BOT_ID || 'bot1';
 const name = process.env.BOT_NAME || 'Bot';

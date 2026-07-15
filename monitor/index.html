@@ -552,5 +552,41 @@ document.getElementById('deckJsonInput').addEventListener('keydown', (e) => {
 refresh();
 setInterval(tick, 1000);
 </script>
+<div class="card" style="margin-top: 16px;">
+  <h2 style="cursor:pointer; user-select:none;" onclick="toggleLogs()">
+    <span id="logChevron">&#9654;</span> Monitor Logs
+    <span style="font-size:11px; color:var(--dim); font-weight:normal;" id="logCount"></span>
+  </h2>
+  <div id="logViewer" style="display:none; max-height:400px; overflow-y:auto; font-size:11px; line-height:1.6; background:#0a0c12; border:1px solid var(--border); border-radius:6px; padding:8px; margin-top:8px; font-family:inherit;">
+  </div>
+</div>
+
+<script>
+let logsVisible = false;
+function toggleLogs() {
+  logsVisible = !logsVisible;
+  document.getElementById('logViewer').style.display = logsVisible ? 'block' : 'none';
+  document.getElementById('logChevron').textContent = logsVisible ? '\u25BC' : '\u25B6';
+  if (logsVisible) fetchLogs();
+}
+
+async function fetchLogs() {
+  try {
+    const r = await fetchJSON('/api/logs?n=200');
+    const el = document.getElementById('logViewer');
+    const count = document.getElementById('logCount');
+    count.textContent = '(' + r.logs.length + ' entries)';
+    el.innerHTML = r.logs.map(l =>
+      '<div style="' + (l.level === 'error' ? 'color:var(--red);' : '') + '">' +
+      escHtml(l.t) + ' ' + escHtml(l.msg) + '</div>'
+    ).join('');
+    el.scrollTop = el.scrollHeight;
+  } catch {}
+}
+
+// Fetch logs periodically, but preserve the collapsed state
+setInterval(() => { if (logsVisible) fetchLogs(); }, 5000);
+</script>
+
 </body>
 </html>
