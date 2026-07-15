@@ -108,6 +108,11 @@ function describeAction(a, gameState, playerId) {
     }
     return `Submit ${dist?.type || 'distribution'}`;
   }
+  if (a.type === 'menuButton' && a.cardId) {
+    if (!gameState) return 'Select card';
+    const info = findCardInfo(a.cardId, gameState);
+    if (info) return `Select ${info.title || `[${info.pile}]`}`;
+  }
   return a.text || a.arg || a.command || 'Action';
 }
 
@@ -215,6 +220,7 @@ function getAvailableActions(gameState) {
       }
     }
     // 5th pass: displayCards with selectCardMode but no perCardButtons
+    // Server uses menuCommand (not onCardClicked), so we emit menuButton with card UUID
     for (const playerId of Object.keys(gameState.players)) {
       const player = gameState.players[playerId];
       const prompt = player?.promptState;
@@ -222,15 +228,24 @@ function getAvailableActions(gameState) {
           prompt.selectCardMode && prompt.selectCardMode !== 'none' &&
           (!prompt.perCardButtons || prompt.perCardButtons.length === 0)) {
         for (const card of prompt.displayCards) {
-          const cardId = card.uuid || card.id;
-          if (cardId && !card.selected) actions.push({ type: 'cardClicked', cardId });
+          const cardUuid = card.cardUuid || card.uuid;
+          if (cardUuid && card.selectionState !== 'selected') {
+            actions.push({ type: 'menuButton', arg: cardUuid, uuid: prompt.promptUuid || '', cardId: cardUuid });
+          }
         }
         break;
       }
     }
   }
-  for (const cardId of getSelectableCardIds(gameState)) {
-    actions.push({ type: 'cardClicked', cardId });
+  // cardClicked crashes displayCards prompts (BaseStep.onCardClicked throws), so skip when any displayCards+selectCardMode is active
+  const hasDisplayCardSelect = gameState?.players && Object.values(gameState.players).some(p => {
+    const pr = p?.promptState;
+    return pr && pr.displayCards && pr.displayCards.length > 0 && pr.selectCardMode && pr.selectCardMode !== 'none';
+  });
+  if (!hasDisplayCardSelect) {
+    for (const cardId of getSelectableCardIds(gameState)) {
+      actions.push({ type: 'cardClicked', cardId });
+    }
   }
   return actions;
 }
