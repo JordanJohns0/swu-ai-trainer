@@ -292,14 +292,15 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/decks' && req.method === 'POST') {
     const body = await readBody(req);
-    if (!body.leader || !body.base || !body.cards) {
-      sendJSON(res, 400, { error: 'leader, base, and cards required' });
+    const cards = body.cards || body.deck;
+    if (!body.leader || !body.base || !cards) {
+      sendJSON(res, 400, { error: 'leader, base, and cards/deck required' });
       return;
     }
-    const name = body.name || deckName(body);
+    const name = body.name || body.metadata?.name || deckName(body);
     const decks = await getDecks();
     const existing = decks.findIndex(d => d.name === name);
-    const entry = { name, leader: body.leader, base: body.base, cards: body.cards, sideboard: body.sideboard || [] };
+    const entry = { name, leader: body.leader, base: body.base, cards, sideboard: body.sideboard || [] };
     if (existing >= 0) decks[existing] = entry;
     else decks.push(entry);
     const r = await saveDecks(decks);
