@@ -1716,6 +1716,7 @@ function isResourcePhase(player, actions) {
 }
 
 function getSelectableCardIds(gameState) {
+  const seen = new Set();
   const ids = [];
   if (!gameState || !gameState.players) return ids;
   for (const playerId of Object.keys(gameState.players)) {
@@ -1726,31 +1727,31 @@ function getSelectableCardIds(gameState) {
       const pile = piles[pileKey];
       if (Array.isArray(pile)) {
         for (const card of pile) {
-          if (card.selectable && !card.selected) ids.push(card.uuid || card.id);
+          const id = card.uuid || card.id;
+          if (id && card.selectable && !card.selected && !seen.has(id)) { seen.add(id); ids.push(id); }
         }
-      } else if (pile && pile.selectable && !pile.selected) {
-        ids.push(pile.uuid || pile.id);
+      } else if (pile) {
+        const id = pile.uuid || pile.id;
+        if (id && pile.selectable && !pile.selected && !seen.has(id)) { seen.add(id); ids.push(id); }
       }
     }
     // Check player-level leader and base (may not be inside cardPiles)
     const leader = player.leader;
-    if (leader && leader.selectable && !leader.selected) {
+    if (leader) {
       const lid = leader.uuid || leader.id;
-      if (lid) ids.push(lid);
+      if (lid && leader.selectable && !leader.selected && !seen.has(lid)) { seen.add(lid); ids.push(lid); }
     }
     const base = player.base;
-    if (base && base.selectable && !base.selected) {
+    if (base) {
       const bid = base.uuid || base.id;
-      if (bid) ids.push(bid);
+      if (bid && base.selectable && !base.selected && !seen.has(bid)) { seen.add(bid); ids.push(bid); }
     }
     // Check promptState displayCards for selectable cards
     const prompt = player.promptState;
     if (prompt && prompt.displayCards && prompt.displayCards.length > 0) {
       for (const card of prompt.displayCards) {
-        if (card.selectable && !card.selected) {
-          const cid = card.uuid || card.id;
-          if (cid) ids.push(cid);
-        }
+        const cid = card.cardUuid || card.uuid || card.id;
+        if (cid && card.selectable && !card.selected && !seen.has(cid)) { seen.add(cid); ids.push(cid); }
       }
     }
   }
