@@ -144,60 +144,55 @@ async function getMatchups() {
   const deckNames = decks.map(d => d.name).filter(Boolean);
   deckNames.push('cad-bane');
 
-  const pairMap = {};
-
-  function getWinnerName(winner) {
-    if (!winner) return null;
-    if (Array.isArray(winner)) {
-      if (winner.length === 0) return null;
-      const w = winner[0];
-      return w?.username || w?.name || null;
-    }
-    return typeof winner === 'string' ? winner : (winner?.username || winner?.name || null);
-  }
-
+  // Group recordings by gameId to pair up self-play games
+  const games = {};
   for (const rec of recordings) {
-    if (!rec.playerName || !rec.winner) continue;
-
-    const myDeck = rec.deckName || botDecks[rec.playerName];
-    if (!myDeck) continue;
-
-    const oppName = Object.keys(botDecks).find(n => n !== rec.playerName);
-    const oppDeck = oppName ? botDecks[oppName] : null;
-    if (!oppDeck) continue;
-
-    const pairId = [myDeck, oppDeck].sort().join('||');
-    if (!pairMap[pairId]) pairMap[pairId] = [];
-    pairMap[pairId].push({ myDeck, oppDeck, winner: rec.winner, playerName: rec.playerName });
+    if (!rec.gameId || !rec.playerName) continue;
+    if (!games[rec.gameId]) games[rec.gameId] = [];
+    games[rec.gameId].push(rec);
   }
 
-  const pairs = [];
-  for (const [pairId, games] of Object.entries(pairMap)) {
-    const recent = games.slice(-50);
-    const [d1, d2] = pairId.split('||');
-    let d1Wins = 0, d2Wins = 0, ties = 0;
-    for (const g of recent) {
-      const winnerName = getWinnerName(g.winner);
-      if (!winnerName) { ties++; continue; }
-      if (winnerName === g.playerName) {
-        if (g.myDeck === d1) d1Wins++;
-        else d2Wins++;
-      } else {
-        if (g.myDeck === d1) d2Wins++;
-        else d1Wins++;
-      }
+  const pairMap = {};
+  for (const [gameId, recs] of Object.entries(games)) {
+    // Collect unique player names and their decks for this game
+    const decksInGame = {};
+    for (const rec of recs) {
+      const d = rec.deckName || botDecks[rec.playerName];
+      if (d) decksInGame[rec.playerName] = d;
     }
-    if (d1Wins + d2Wins + ties > 0) {
-      pairs.push({
-        deckA: d1,
-        deckB: d2,
-        aWins: d1Wins,
-        bWins: d2Wins,
-        ties,
-        total: recent.length
-      });
+    const names = Object.keys(decksInGame);
+
+    let deckA, deckB, p1Name, p2Name;
+    if (names.length >= 2) {
+      // Self-play: both bots left recordings
+      p1Name = names[0]; deckA = decksInGame[p1Name];
+      p2Name = names[1]; deckB = decksInGame[p2Name];
+    } else if (names.length === 1 && Object.keys(botDecks).length >= 2) {
+      // Single recording but bot_decks has both bots
+      p1Name = names[0]; deckA = decksInGame[p1Name];
+      p2Name = Object.keys(botDecks).find(n => n !== p1Name);
+      deckB = p2Name ? botDecks[p2Name] : null;
+      if (!p2Name || !deckB) continue;
+    } else {
+      continue;
     }
+
+    const winner = recs[0].winner;
+    if (!winner) continue;
+    const w = Array.isArray(winner) ? winner[0] : winner;
+    const winnerName = w?.username || w?.name || (typeof w === 'string' ? w : null);
+    if (!winnerName) continue;
+
+    const pairId = [deckA, deckB].sort().join('||');
+    if (!pairMap[pairId]) pairMap[pairId] = { deckA, deckB, aWins: 0, bWins: 0, total: 0 };
+    pairMap[pairId].total++;
+    if (winnerName === p1Name) pairMap[pairId].aWins++;
+    else pairMap[pairId].bWins++;
   }
+
+  const pairs = Object.values(pairMap)
+    .filter(p => p.total > 0)
+    .map(p => ({ ...p, ties: 0 }));
 
   return { pairs, deckList: [...new Set(deckNames)] };
 }
