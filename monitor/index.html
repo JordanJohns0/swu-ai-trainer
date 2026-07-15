@@ -558,8 +558,8 @@ document.getElementById('addDeckBtn').addEventListener('click', async () => {
   const feedback = document.getElementById('deckFeedback');
   let parsed;
   try { parsed = JSON.parse(raw); } catch (e) { feedback.textContent = 'Invalid JSON: ' + e.message; return; }
-  if (!parsed.leader || !parsed.base || !parsed.cards) {
-    feedback.textContent = 'Missing leader, base, or cards in JSON';
+  if (!parsed.leader || !parsed.base || (!parsed.cards && !parsed.deck)) {
+    feedback.textContent = 'Missing leader, base, or cards/deck in JSON';
     return;
   }
   const btn = document.getElementById('addDeckBtn');
