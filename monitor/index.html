@@ -427,8 +427,14 @@ async function refresh() {
 
   // SSH status
   const sshEl = document.getElementById('sshStatus');
-  if (data.sshOk) sshEl.innerHTML = '<span class="status-dot green"></span> connected';
-  else sshEl.innerHTML = '<span class="status-dot red"></span> ' + escHtml(data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
+  if (data.sshOk) {
+    let tunnel = '';
+    if (data.tunnelOk) tunnel = ' <span class="status-dot green"></span> tunnel';
+    else tunnel = ' <span class="status-dot yellow"></span> tunnel';
+    sshEl.innerHTML = '<span class="status-dot green"></span> connected' + tunnel;
+  } else {
+    sshEl.innerHTML = '<span class="status-dot red"></span> ' + escHtml(data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
+  }
 
   // Separate bots from trainer
   const bots = (data.bots || []).filter(b => b.id !== '_trainer');

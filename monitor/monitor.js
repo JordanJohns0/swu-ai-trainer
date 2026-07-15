@@ -15,6 +15,7 @@ const TUNNEL_PORT = parseInt(process.env.MONITOR_TUNNEL_PORT || '3457', 10);
 
 // In-memory bot statuses received via POST /api/bot/status
 const botStatusMap = new Map();
+let lastPostTime = 0;
 
 async function sshCmd(cmd) {
   try {
@@ -201,6 +202,15 @@ async function getMatchups() {
   return { pairs, deckList: [...new Set(deckNames)] };
 }
 
+async function getFallbackBotStatuses() {
+  const r = await sshCmd(`for f in ${DATA_PATH}/bot_status_*.json; do [ -f "$f" ] && cat "$f" && echo "===BOTSTATUS==="; done`);
+  if (!r.ok || !r.data) return [];
+  const parts = r.data.split('===BOTSTATUS===').filter(Boolean);
+  return parts.map(p => {
+    try { return JSON.parse(p.trim()); } catch { return null; }
+  }).filter(Boolean);
+}
+
 function sendJSON(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -273,8 +283,9 @@ const server = http.createServer(async (req, res) => {
   // Bot status POST (from bots via SSH tunnel)
   if (url.pathname === '/api/bot/status' && req.method === 'POST') {
     const body = await readBody(req);
+    lastPostTime = Date.now();
     if (body.id && body.state) {
-      body.updatedAt = Date.now();
+      body.updatedAt = lastPostTime;
       botStatusMap.set(body.id, body);
     }
     sendJSON(res, 200, { ok: true });
@@ -282,15 +293,27 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/status' && req.method === 'GET') {
-    const [sshCheck, stats, recordingsCount, serverInfo, weightsMtime, recordingsMtime, botDecks] = await Promise.all([
+    const [sshCheck, stats, recordingsCount, serverInfo, weightsMtime, recordingsMtime, botDecks, fallbackStatuses] = await Promise.all([
       sshCmd('echo ok'),
       readFile('stats.json'),
       getArrayLength('recordings.json'),
       getServerInfo(),
       getFileMtime('weights.json'),
       getFileMtime('recordings.json'),
-      getBotDecks()
+      getBotDecks(),
+      getFallbackBotStatuses()
     ]);
+
+    // Merge: in-memory (from POST) wins over SSH-fetched files
+    const merged = new Map();
+    for (const fb of fallbackStatuses) {
+      if (fb.id) merged.set(fb.id, fb);
+    }
+    for (const [id, status] of botStatusMap) {
+      merged.set(id, status);
+    }
+
+    const tunnelOk = (Date.now() - lastPostTime) < 30000;
 
     sendJSON(res, 200, {
       timestamp: Date.now(),
@@ -298,11 +321,12 @@ const server = http.createServer(async (req, res) => {
       recordingsCount,
       weightsModified: weightsMtime || null,
       recordingsModified: recordingsMtime || null,
-      bots: Array.from(botStatusMap.values()),
+      bots: Array.from(merged.values()),
       botDecks,
       server: serverInfo,
       sshOk: sshCheck.ok,
-      sshError: sshCheck.ok ? null : sshCheck.error
+      sshError: sshCheck.ok ? null : sshCheck.error,
+      tunnelOk
     });
     return;
   }
