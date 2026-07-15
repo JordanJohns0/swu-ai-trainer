@@ -63,29 +63,15 @@
   .stat-label { color: var(--dim); }
   .stat-value { font-weight: 500; }
 
-  .bot-cards {
-    display: flex; flex-wrap: wrap; gap: 10px;
-  }
+  .bot-cards { display: flex; flex-wrap: wrap; gap: 10px; }
   .bot-card {
     background: rgba(255,255,255,0.03);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 14px;
-    min-width: 170px;
-    flex: 1 1 170px;
-    position: relative;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; min-width: 190px; flex: 1 1 190px; position: relative;
   }
-  .bot-card-header {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 2px;
-  }
-  .bot-name {
-    font-size: 14px; font-weight: 600;
-  }
-  .bot-state {
-    font-size: 18px; font-weight: 700;
-    margin-bottom: 2px;
-  }
+  .bot-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .bot-name { font-size: 14px; font-weight: 600; }
+  .bot-state { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
   .bot-state.ingame { color: var(--accent); }
   .bot-state.inqueue { color: var(--green); }
   .bot-state.queuing { color: var(--yellow); }
@@ -94,19 +80,10 @@
   .bot-state.requeuing { color: var(--yellow); }
   .bot-state.starting { color: var(--dim); }
   .bot-state.unknown { color: var(--dim); }
-  .bot-detail {
-    font-size: 12px; color: var(--dim);
-    line-height: 1.5;
-  }
+  .bot-detail { font-size: 12px; color: var(--dim); line-height: 1.5; }
   .bot-detail strong { color: var(--text); font-weight: 500; }
-  .bot-time {
-    font-size: 10px; color: var(--dim);
-    margin-top: 4px;
-  }
-  .bot-empty {
-    color: var(--dim); font-size: 13px;
-    padding: 8px 0;
-  }
+  .bot-time { font-size: 10px; color: var(--dim); margin-top: 4px; }
+  .bot-empty { color: var(--dim); font-size: 13px; padding: 8px 0; }
   .bot-remove {
     position: absolute; top: 8px; right: 8px;
     background: none; border: 1px solid var(--border); color: var(--red);
@@ -114,10 +91,15 @@
     font-family: inherit;
   }
   .bot-remove:hover { background: rgba(248,113,113,0.15); }
-
-  .add-bot-area {
-    display: flex; gap: 8px; margin-bottom: 12px; align-items: center;
+  .bot-deck-select {
+    width: 100%; margin-top: 6px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 6px; color: var(--text); font-size: 10px; font-family: inherit;
+    cursor: pointer;
   }
+  .bot-deck-select:focus { outline: none; border-color: var(--accent); }
+
+  .add-bot-area { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
   .add-bot-area input {
     background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
     padding: 6px 10px; color: var(--text); font-size: 12px; font-family: inherit;
@@ -132,6 +114,7 @@
   .btn:hover { filter: brightness(1.2); }
   .btn:disabled { opacity: 0.5; cursor: default; }
   .btn-danger { background: var(--red); color: #fff; }
+  .btn-sm { padding: 4px 8px; font-size: 10px; }
 
   .training-banner {
     display: flex; align-items: center; gap: 10px;
@@ -146,6 +129,41 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .deck-list { margin-bottom: 8px; }
+  .deck-entry {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 8px; font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .deck-entry:last-child { border-bottom: none; }
+  .deck-entry .deck-name { flex: 1; }
+  .deck-entry .deck-del {
+    background: none; border: none; color: var(--red); cursor: pointer;
+    font-size: 14px; padding: 0 4px; font-family: inherit;
+  }
+  .deck-entry .deck-del:hover { color: #fff; }
+
+  .deck-add-area { display: flex; flex-direction: column; gap: 6px; }
+  .deck-add-area textarea {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px; color: var(--text); font-size: 11px; font-family: inherit;
+    min-height: 80px; resize: vertical;
+  }
+  .deck-add-area textarea:focus { outline: none; border-color: var(--accent); }
+  .deck-add-row { display: flex; gap: 8px; align-items: center; }
+  .deck-add-row .btn { flex-shrink: 0; }
+  .deck-feedback { font-size: 11px; color: var(--dim); min-height: 16px; }
+
+  .matchup-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .matchup-table th, .matchup-table td {
+    padding: 6px 8px; text-align: center; border-bottom: 1px solid var(--border);
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .matchup-table th { color: var(--dim); font-weight: 500; font-size: 10px; text-transform: uppercase; }
+  .matchup-table td.left { text-align: left; color: var(--dim); }
+  .matchup-table .highlight { color: var(--accent); font-weight: 600; }
+  .matchup-empty { color: var(--dim); font-size: 12px; padding: 12px 0; text-align: center; }
 
   .mem-bar {
     width: 100%; height: 6px; background: var(--bar-bg); border-radius: 3px;
@@ -193,6 +211,20 @@
   </div>
 
   <div class="card">
+    <h2>Decks</h2>
+    <div class="deck-list" id="deckList">
+      <div class="bot-empty">Loading...</div>
+    </div>
+    <div class="deck-add-area">
+      <textarea id="deckJsonInput" placeholder='Paste deck JSON here...'></textarea>
+      <div class="deck-add-row">
+        <button class="btn btn-sm" id="addDeckBtn">+ Add Deck</button>
+        <span class="deck-feedback" id="deckFeedback"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Training Stats</h2>
     <div id="trainingStats">
       <div class="stat-row"><span class="stat-label">Games Trained</span><span class="stat-value" id="gamesTrained">-</span></div>
@@ -221,6 +253,13 @@
   </div>
 </div>
 
+<div class="card" style="margin-bottom:16px;">
+  <h2>Matchups (last 50 games per pair)</h2>
+  <div id="matchupTable">
+    <div class="matchup-empty">Loading...</div>
+  </div>
+</div>
+
 <div class="footer-bar">
   <span>SSH: <span id="sshHost">192.168.1.157</span></span>
   <span id="lastUpdated">Last updated: -</span>
@@ -243,85 +282,65 @@ function fmtTime(ts) {
   return d.toLocaleDateString() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-function fmtUptime(bootTime) {
-  if (!bootTime) return '-';
-  const boot = new Date(bootTime);
-  const sec = Math.floor((Date.now() - boot.getTime()) / 1000);
-  const d = Math.floor(sec / 86400);
-  const h = Math.floor((sec % 86400) / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  if (d > 0) return d + 'd ' + h + 'h';
-  if (h > 0) return h + 'h ' + m + 'm';
-  return m + 'm';
+function stateDot(s) {
+  switch (s) {
+    case 'in_game': return 'green'; case 'in_queue': return 'green';
+    case 'queuing': case 'requeuing': return 'yellow';
+    case 'training': return 'orange'; case 'starting': return 'yellow';
+    case 'stuck': return 'red'; default: return 'yellow';
+  }
 }
-
-function stateDot(state) {
-  switch (state) {
-    case 'in_game': return 'green';
-    case 'in_queue': return 'green';
-    case 'queuing': return 'yellow';
-    case 'requeuing': return 'yellow';
-    case 'training': return 'orange';
-    case 'starting': return 'yellow';
-    case 'stuck': return 'red';
-    default: return 'yellow';
+function stateLabel(s) {
+  switch (s) {
+    case 'in_game': return 'In Game'; case 'in_queue': return 'In Queue';
+    case 'queuing': return 'Queuing'; case 'requeuing': return 'Requeuing';
+    case 'training': return 'Training'; case 'starting': return 'Starting';
+    case 'stuck': return 'Stuck'; default: return s;
+  }
+}
+function stateClass(s) {
+  switch (s) {
+    case 'in_game': return 'ingame'; case 'in_queue': return 'inqueue';
+    case 'queuing': return 'queuing'; case 'requeuing': return 'requeuing';
+    case 'training': return 'training'; case 'starting': return 'starting';
+    case 'stuck': return 'stuck'; default: return 'unknown';
   }
 }
 
-function stateLabel(state) {
-  switch (state) {
-    case 'in_game': return 'In Game';
-    case 'in_queue': return 'In Queue';
-    case 'queuing': return 'Queuing';
-    case 'requeuing': return 'Requeuing';
-    case 'training': return 'Training';
-    case 'starting': return 'Starting';
-    case 'stuck': return 'Stuck';
-    default: return state;
-  }
-}
-
-function stateClass(state) {
-  switch (state) {
-    case 'in_game': return 'ingame';
-    case 'in_queue': return 'inqueue';
-    case 'queuing': return 'queuing';
-    case 'requeuing': return 'requeuing';
-    case 'training': return 'training';
-    case 'starting': return 'starting';
-    case 'stuck': return 'stuck';
-    default: return 'unknown';
-  }
-}
-
-function renderBotCard(bot) {
+function renderBotCard(bot, decks, botDecks) {
   const stale = (Date.now() - bot.updatedAt) > 60000;
   const dotColor = stale ? 'yellow' : stateDot(bot.state);
+  const currentDeck = botDecks && botDecks[bot.name] ? botDecks[bot.name] : '';
+  const opts = '<option value="">(default)</option>' + decks.map(d =>
+    '<option value="' + d.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;') + '"' +
+    (d.name === currentDeck ? ' selected' : '') + '>' + d.name + '</option>'
+  ).join('');
   let detail = '';
-
   if (bot.state === 'in_game') {
     detail += '<div>vs <strong>' + (bot.opponent || '?') + '</strong></div>';
   }
-
   return '<div class="bot-card">' +
     '<button class="bot-remove" data-name="' + bot.name + '">&times;</button>' +
     '<div class="bot-card-header">' +
       '<span class="status-dot ' + dotColor + '"></span>' +
       '<span class="bot-name">' + bot.name + '</span>' +
     '</div>' +
-    '<div class="bot-state ' + stateClass(bot.state) + '">' +
-      stateLabel(bot.state) +
-    '</div>' +
+    '<div class="bot-state ' + stateClass(bot.state) + '">' + stateLabel(bot.state) + '</div>' +
     '<div class="bot-detail">' + detail + '</div>' +
+    '<select class="bot-deck-select" data-bot="' + bot.name + '">' + opts + '</select>' +
     '<div class="bot-time">' + fmtTime(bot.updatedAt) + '</div>' +
   '</div>';
 }
 
+async function fetchJSON(url, opts) {
+  const resp = await fetch(url, opts);
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  return await resp.json();
+}
+
 async function fetchStatus() {
   try {
-    const resp = await fetch('/api/status');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    return await resp.json();
+    return await fetchJSON('/api/status');
   } catch (e) {
     document.getElementById('sshStatus').innerHTML =
       '<span class="status-dot red"></span> error: ' + e.message;
@@ -329,53 +348,134 @@ async function fetchStatus() {
   }
 }
 
-function render(data) {
+async function fetchDecks() {
+  try { return await fetchJSON('/api/decks'); }
+  catch { return []; }
+}
+
+async function fetchMatchups() {
+  try { return await fetchJSON('/api/matchups'); }
+  catch { return { pairs: [], deckList: [] }; }
+}
+
+function renderDecks(decks) {
+  const el = document.getElementById('deckList');
+  if (!decks || decks.length === 0) {
+    el.innerHTML = '<div class="bot-empty">No custom decks. Paste JSON below to add one.</div>';
+    return;
+  }
+  el.innerHTML = decks.map(d =>
+    '<div class="deck-entry">' +
+      '<span class="deck-name">' + d.name + '</span>' +
+      '<button class="deck-del" data-name="' + d.name.replace(/"/g,'&quot;') + '">&times;</button>' +
+    '</div>'
+  ).join('');
+  document.querySelectorAll('.deck-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete deck "' + btn.dataset.name + '"?')) return;
+      try {
+        await fetchJSON('/api/decks', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: btn.dataset.name })
+        });
+      } catch {}
+      refresh();
+    });
+  });
+}
+
+function renderMatchups(matchups) {
+  const el = document.getElementById('matchupTable');
+  if (!matchups || !matchups.pairs || matchups.pairs.length === 0) {
+    el.innerHTML = '<div class="matchup-empty">No matchup data yet. Play more games!</div>';
+    return;
+  }
+  let html = '<table class="matchup-table"><thead><tr><th>Deck A</th><th>Deck B</th><th>A Wins</th><th>B Wins</th><th>Win%</th><th>Games</th></tr></thead><tbody>';
+  for (const p of matchups.pairs) {
+    const total = p.aWins + p.bWins || 1;
+    const pct = ((Math.max(p.aWins, p.bWins) / total) * 100).toFixed(0);
+    html += '<tr>' +
+      '<td class="left">' + p.deckA + '</td>' +
+      '<td class="left">' + p.deckB + '</td>' +
+      '<td class="highlight">' + p.aWins + '</td>' +
+      '<td>' + p.bWins + '</td>' +
+      '<td>' + pct + '%</td>' +
+      '<td>' + p.total + '</td>' +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+let lastData = null;
+let lastDecks = null;
+
+async function refresh() {
+  const [data, decks, matchups] = await Promise.all([
+    fetchStatus(),
+    fetchDecks(),
+    fetchMatchups()
+  ]);
+  lastData = data;
+  lastDecks = decks;
+
   if (!data) return;
 
+  // SSH status
   const sshEl = document.getElementById('sshStatus');
-  if (data.sshOk) {
-    sshEl.innerHTML = '<span class="status-dot green"></span> connected';
-  } else {
-    sshEl.innerHTML = '<span class="status-dot red"></span> ' + (data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
-  }
+  if (data.sshOk) sshEl.innerHTML = '<span class="status-dot green"></span> connected';
+  else sshEl.innerHTML = '<span class="status-dot red"></span> ' + (data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
 
-  // Separate bots from trainer status
+  // Separate bots from trainer
   const bots = (data.bots || []).filter(b => b.id !== '_trainer');
   const trainer = (data.bots || []).find(b => b.id === '_trainer');
 
   // Training banner
   const tbEl = document.getElementById('trainingBanner');
   if (trainer && trainer.state === 'training') {
-    tbEl.innerHTML = '<div class="training-banner"><div class="spinner"></div> <strong>Training in progress...</strong> <span style="color:var(--dim)">| ' + (trainer.message || '') + '</span></div>';
+    tbEl.innerHTML = '<div class="training-banner"><div class="spinner"></div> <strong>Training in progress...</strong></div>';
   } else {
     tbEl.innerHTML = '';
   }
 
-  // Bot status cards
+  // Bot cards
   const bpEl = document.getElementById('botStatuses');
   if (bots.length === 0) {
     bpEl.innerHTML = '<div class="bot-empty">No bot processes found</div>';
   } else {
-    bpEl.innerHTML = '<div class="bot-cards">' + bots.map(renderBotCard).join('') + '</div>';
+    bpEl.innerHTML = '<div class="bot-cards">' +
+      bots.map(b => renderBotCard(b, decks, data.botDecks)).join('') + '</div>';
 
-    // Attach remove handlers
+    // Remove handlers
     document.querySelectorAll('.bot-remove').forEach(btn => {
       btn.addEventListener('click', async () => {
         const name = btn.dataset.name;
         if (!confirm('Remove ' + name + '?')) return;
-        btn.disabled = true;
-        btn.textContent = '...';
-        try {
-          await fetch('/api/bots/remove', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
-          });
-        } catch {}
+        btn.disabled = true; btn.textContent = '...';
+        try { await fetchJSON('/api/bots/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); } catch {}
         refresh();
       });
     });
+
+    // Deck change handlers
+    document.querySelectorAll('.bot-deck-select').forEach(sel => {
+      sel.addEventListener('change', async () => {
+        const botName = sel.dataset.bot;
+        const deckName = sel.value;
+        try {
+          await fetchJSON('/api/bots/deck', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ botName, deckName })
+          });
+        } catch {}
+      });
+    });
   }
+
+  // Decks
+  renderDecks(decks);
 
   // Training stats
   const s = data.stats;
@@ -389,81 +489,102 @@ function render(data) {
   // Server health
   const sv = data.server;
   if (sv && sv.load) {
-    document.getElementById('loadAvg').textContent =
-      sv.load['1m'] + ' / ' + sv.load['5m'] + ' / ' + sv.load['15m'];
-  } else {
-    document.getElementById('loadAvg').textContent = '-';
-  }
-
+    document.getElementById('loadAvg').textContent = sv.load['1m'] + ' / ' + sv.load['5m'] + ' / ' + sv.load['15m'];
+  } else { document.getElementById('loadAvg').textContent = '-'; }
   if (sv && sv.memory) {
     const mem = sv.memory;
-    document.getElementById('memory').textContent =
-      mem.used + 'MB / ' + mem.total + 'MB';
+    document.getElementById('memory').textContent = mem.used + 'MB / ' + mem.total + 'MB';
     const pct = Math.min(100, (parseInt(mem.used) / parseInt(mem.total)) * 100);
     const bar = document.getElementById('memBar');
     bar.style.width = pct + '%';
     bar.className = 'mem-bar-fill' + (pct > 80 ? ' high' : '');
-  } else {
-    document.getElementById('memory').textContent = '-';
-  }
-
+  } else { document.getElementById('memory').textContent = '-'; }
   document.getElementById('bootTime').textContent = sv && sv.bootTime ? fmtUptime(sv.bootTime) : '-';
   document.getElementById('weightsUpdated').textContent = fmtTime(data.weightsModified);
+  document.getElementById('lastUpdated').textContent = 'Last updated: ' + fmtTime(data.timestamp);
 
-  document.getElementById('lastUpdated').textContent =
-    'Last updated: ' + fmtTime(data.timestamp);
+  // Matchups
+  renderMatchups(matchups);
 }
 
-async function refresh() {
-  const data = await fetchStatus();
-  render(data);
+function fmtUptime(bootTime) {
+  if (!bootTime) return '-';
+  const boot = new Date(bootTime);
+  const sec = Math.floor((Date.now() - boot.getTime()) / 1000);
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
 }
 
 function tick() {
   countdown--;
-  if (countdown <= 0) {
-    countdown = REFRESH_INTERVAL;
-    refresh();
-  }
+  if (countdown <= 0) { countdown = REFRESH_INTERVAL; refresh(); }
   document.getElementById('refreshBadge').textContent = countdown + 's';
 }
 
-// Add bot button
+// Add bot
 document.getElementById('addBotBtn').addEventListener('click', async () => {
   const input = document.getElementById('botNameInput');
   const name = input.value.trim();
   if (!name) return;
   const btn = document.getElementById('addBotBtn');
-  btn.disabled = true;
-  btn.textContent = 'Adding...';
+  btn.disabled = true; btn.textContent = 'Adding...';
   try {
-    const resp = await fetch('/api/bots/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const result = await fetchJSON('/api/bots/add', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name })
     });
-    const result = await resp.json();
     if (result.ok) {
       input.value = '';
-      // Auto-increment for next add
-      const match = name.match(/^Bot-(\d+)$/);
-      if (match) {
-        input.value = 'Bot-' + (parseInt(match[1]) + 1);
-      }
-    } else {
-      alert('Failed: ' + (result.error || 'unknown'));
-    }
-  } catch (e) {
-    alert('Error: ' + e.message);
+      const m = name.match(/^Bot-(\d+)$/);
+      if (m) input.value = 'Bot-' + (parseInt(m[1]) + 1);
+    } else { alert('Failed: ' + (result.error || 'unknown')); }
+  } catch (e) { alert('Error: ' + e.message); }
+  btn.disabled = false; btn.textContent = '+ Add';
+  refresh();
+});
+document.getElementById('botNameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('addBotBtn').click();
+});
+
+// Add deck
+document.getElementById('addDeckBtn').addEventListener('click', async () => {
+  const input = document.getElementById('deckJsonInput');
+  const raw = input.value.trim();
+  if (!raw) return;
+  const feedback = document.getElementById('deckFeedback');
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { feedback.textContent = 'Invalid JSON: ' + e.message; return; }
+  if (!parsed.leader || !parsed.base || !parsed.cards) {
+    feedback.textContent = 'Missing leader, base, or cards in JSON';
+    return;
   }
-  btn.disabled = false;
-  btn.textContent = '+ Add';
+  const btn = document.getElementById('addDeckBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const result = await fetchJSON('/api/decks', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: raw
+    });
+    if (result.ok) {
+      feedback.textContent = 'Saved: ' + (result.name || '');
+      input.value = '';
+    } else {
+      feedback.textContent = 'Error: ' + (result.error || 'unknown');
+    }
+  } catch (e) { feedback.textContent = 'Error: ' + e.message; }
+  btn.disabled = false; btn.textContent = '+ Add Deck';
   refresh();
 });
 
-// Enter key on bot name input
-document.getElementById('botNameInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('addBotBtn').click();
+// Ctrl+Enter to submit deck
+document.getElementById('deckJsonInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    document.getElementById('addDeckBtn').click();
+  }
 });
 
 refresh();

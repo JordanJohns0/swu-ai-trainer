@@ -112,9 +112,17 @@ function createSocket(id, name) {
 }
 
 async function runBot(id, name) {
-  const deck = getDeck(DECK_NAME);
-
   const botDir = path.join(__dirname, '..', 'server', 'data');
+
+  // Read deck assignment from config, fall back to env var
+  let deckName = DECK_NAME;
+  try {
+    const configRaw = fs.readFileSync(path.join(botDir, 'bot_decks.json'), 'utf8');
+    const config = JSON.parse(configRaw);
+    if (config[name]) deckName = config[name];
+  } catch {}
+  console.log(`${name} using deck: ${deckName}`);
+  const deck = getDeck(deckName);
   const pidFile = path.join(botDir, `bot_pid_${id}`);
   try { fs.writeFileSync(pidFile, process.pid.toString(), 'utf8'); } catch {}
 
@@ -188,7 +196,7 @@ async function runBot(id, name) {
       lastStateHash = null;
       lastActionSentTime = now;
       triedActionsMap.clear();
-      recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
+      recording = { gameId: sid, playerId: id, playerName: name, deckName, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
       saveBotStatus(id, name, { state: 'in_game', gameId: sid, phase: data.phase, opponent: getOpponentName(data), message: 'started' }).catch(() => {});
     }

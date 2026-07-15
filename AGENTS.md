@@ -8,8 +8,9 @@ Support running bots that queue into Forceteki and play games autonomously handl
 - **MV3 CSP blocks TF.js**: pure-JS NeuralNet (Float64Array math) instead; no `'unsafe-eval'`
 - **Training**: ranking loss (hinge margin) on `(state, action)` score pairs, linear output (no sigmoid), topK mining, weight decay
 - **Delay**: 1-3s (minWait-maxWait), halved for ≤2 actions, floored at 1000ms
-- **Batch training**: every N games (default 5), not continuous — more memory-predictable
-- **Persistence**: file-based (`server/data/weights.json`, `recordings.json`, `stats.json`)
+- **Batch training**: every 10 games, not continuous — more memory-predictable
+- **Persistence**: file-based (`server/data/weights.json`, `recordings.json`, `stats.json`, `decks.json`, `bot_decks.json`, `bot_status_*.json`)
+- **SSH key auth** required for monitor; no password prompts (`BatchMode=yes`)
 
 ## Progress
 ### Done — Chrome Extension
@@ -22,44 +23,63 @@ Support running bots that queue into Forceteki and play games autonomously handl
 
 ### Done — Headless Bot (`bot/`)
 - **`bot/model.js`**: NeuralNet, Layer, encodeGameState, encodeActions, selectBestAction — pure JS, 0 deps
-- **`bot/storage.js`**: file-based load/save for weights, recordings, training stats
+- **`bot/storage.js`**: file-based load/save for weights, recordings, training stats, bot status
 - **`bot/util.js`**: ported `getAvailableActions`, `selectAiAction`, `trySequences`, `cardToResource`, `describeAction`, etc.
 - **`bot/training.js`**: `trainModelRanking` extracted (avoids circular dep with util)
-- **`bot/decks.js`**: Cad Blue deck (Cad Bane ASH/011, Nevarro City ASH/020)
-- **`bot/bot.js`**: Socket.IO client — HTTP enter-queue (once) → persistent socket → game loop (receive gamestate → NN action → emit `'game'` events) → batch train → emit `'requeue'` on same socket
+- **`bot/decks.js`**: Cad Blue deck + custom deck loading from `server/data/decks.json`
+- **`bot/bot.js`**: Socket.IO client — reads `bot_decks.json` for per-bot deck assignment, stores `deckName` and `playerName` in recordings
+- **PID file**: `bot_pid_{id}` written on start for killable add/remove via monitor
+- **Bot status**: state transitions persisted to `bot_status_{id}.json` for monitor polling
+
+### Done — Monitor (`monitor/`)
+- **`monitor/monitor.js`**: local HTTP server (port 3456) polls Linux server via SSH every 5s
+  - `GET /api/status` — bot states, training stats, server health, weights mtime
+  - `POST /api/bots/add` — `nohup` starts a new bot process on the server
+  - `POST /api/bots/remove` — kills bot by PID file, cleans up status
+  - `GET /api/decks` — lists custom decks from `server/data/decks.json`
+  - `POST /api/decks` — add or update a deck (auto-generates name from leader/base titles)
+  - `DELETE /api/decks` — remove a deck by name
+  - `POST /api/bots/deck` — assign a deck to a bot (writes `bot_decks.json`)
+  - `GET /api/matchups` — win/loss per deck pair over last 50 games per pair
+- **`monitor/index.html`**: dark-themed dashboard with bot cards (add/remove, deck dropdown), decks list (add/remove), matchup matrix, training stats, server health
+- All SSH via `execFile` with argument arrays (no shell) to avoid Windows `cmd.exe` quoting issues
+- Uses `MONITOR_SSH_HOST`/`MONITOR_SSH_USER` env vars (not `SSH_USER` — collides with hidden Windows env var)
 
 ### Verified — Game Completes
-- **Fixed `'game'` event wrapping**: Server listens for `'game'` event and dispatches by command name (`Lobby.ts:1470-1474`). Bot now emits `socket.emit('game', 'menuButton', arg, uuid)` instead of bare `socket.emit('menuButton', ...)`. All bot actions were silently dropped before this fix.
+- **Fixed `'game'` event wrapping**: Server listens for `'game'` event and dispatches by command name. Bot emits `socket.emit('game', 'menuButton', arg, uuid)` instead of bare `socket.emit('menuButton', ...)`.
 - **Game runs to completion** (Bot-1 won, full turns played)
-- **Training pipeline works**: batch training triggers every N games, 5 epochs, weights persist
+- **Training pipeline works**: batch training triggers every 10 games, weights persist
 - **`pendingRequeue` flag**: prevents duplicate processing of stale gamestate events after game end
-- **Persistent socket requeue**: emits `'requeue'` on existing socket (no new HTTP queue or socket creation) — fixes 403 "already in a lobby"
+- **Persistent socket requeue**: emits `'requeue'` on existing socket — fixes 403 "already in a lobby"
 - **Reconnect guard**: only re-queues on reconnect if no active game (`!gameId`)
 
 ### Known Minor Issue
-- Frequent "no actions" diagnostic when bot is in waiting-prompt state (already acted, waiting for opponent). Shows `promptType:"resource"`/`"actionWindow"` with `buttons:0` — this is correct behavior (the waiting prompt has no buttons/selectable cards), just noisy.
+- Frequent "no actions" diagnostic when bot is in waiting-prompt state (already acted, waiting for opponent). Shows `promptType:"resource"`/`"actionWindow"` with `buttons:0` — this is correct behavior, just noisy.
 
 ### Next Steps
-1. Let requeue run over multiple games to verify persistent socket cycle works
-2. Debug any prompt types the bot can't handle (new Forceteki 2.0 changes)
-3. Add more decks for variety
+1. Deploy updated bot files to server and restart
+2. Create initial `decks.json` and `bot_decks.json` on server (monitor API will populate)
+3. Test add/remove bot flow from dashboard
+4. Test deck assignment and matchup stats after games
 
 ## Key Decisions
 - **Encode/action port**: `encodeGameState` + `encodeActions` + `NeuralNet` from model.js (no deps); `getAvailableActions` + `selectAiAction` + `trySequences` from util.js (depends on model.js + storage.js); `trainModelRanking` in training.js (depends on both)
 - **Socket.IO protocol**: connection URL `http://localhost:3000/ws?user=...&lobby=...&spectator=false` (path `/ws`), events: `gamestate` (receive), `menuButton(arg, uuid)` / `cardClicked(cardId)` / `statefulPromptResults(distribution, uuid)` (send)
-- **Enter queue**: HTTP POST `/api/enter-queue` with `{ user: {id, username}, format: 'premier', cardPool: 'current', gamesToWinMode: 'bestOfOne', deck }` → then socket connect → server finds user in queue → matchmakes
-- **Self-play mode**: `SELF_PLAY=true` starts two bot instances in parallel (separate processes), each with own id/name
-- **Cancel/Close filtered everywhere**: both in `sendRecommendations` and `selectAiAction`
-- **Card UUID format**: Forceteki 2.0 `Card_58`, `Card_194`, etc.
+- **Enter queue**: HTTP POST `/api/enter-queue` → socket connect → server finds user → matchmakes
+- **Self-play mode**: `SELF_PLAY=true` starts two bot instances in parallel
+- **execFile over exec**: using argument arrays bypasses `cmd.exe` on Windows, fixing quote-mangling
+- **Deck storage**: custom decks in `server/data/decks.json`, bot-to-deck mapping in `server/data/bot_decks.json`
+- **Deck name**: auto-generated as `"Leader Title / Base Title"` from pasted JSON, with optional `name` override
+- **Matchup computation**: compares winner's username against `rec.playerName` (stored per game), cross-references `bot_decks.json` for opponent deck
 
 ## Relevant Files
-- `chrome-extension/src/background/index.js`: action selection (line 580), getAvailableActions (line 1527), trySequences (line 1355), helpers (lines 678-1354)
-- `chrome-extension/src/background/model.js`: NeuralNet, Layer, encode, training
-- `bot/model.js`: ported NeuralNet + encoding standalone
-- `bot/util.js`: ported getAvailableActions, selectAiAction, trySequences, cardToResource
-- `bot/storage.js`: file-based persistence
-- `bot/training.js`: trainModelRanking (avoids circular dep)
-- `bot/bot.js`: Socket.IO main loop
-- `bot/decks.js`: deck definitions
-- `forceteki/server/gamenode/GameServer.ts`: Socket.IO setup (line 300), enter-queue handler (line 1509)
-- `forceteki/server/socket.js`: custom Socket wrapper — `send(evt, ...args)` = `socket.emit(evt, ...args)`
+- `bot/bot.js`: main bot loop — PID file, status writes, deck config, recording metadata
+- `bot/decks.js`: deck definitions + custom deck loader
+- `bot/storage.js`: file-based persistence for weights, recordings, stats, bot status
+- `bot/util.js`: action extraction and selection
+- `bot/model.js`: NeuralNet, Layer, encode, training
+- `bot/training.js`: trainModelRanking
+- `monitor/monitor.js`: HTTP server with SSH-backed API (bots, decks, matchups, status)
+- `monitor/index.html`: dashboard UI
+- `forceteki/server/gamenode/GameServer.ts`: Socket.IO setup, enter-queue handler
+- `server/data/`: runtime directory for all persisted state (weights, recordings, stats, decks, bot configs, status files, PID files)
