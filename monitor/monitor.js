@@ -1,4 +1,4 @@
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -11,6 +11,10 @@ const SSH_USER = (process.env.MONITOR_SSH_USER || 'jordan').trim();
 const DATA_PATH = process.env.DATA_PATH || '/home/jordan/swu/swu-ai-trainer/server/data';
 const BOT_DIR = process.env.BOT_DIR || '/home/jordan/swu/swu-ai-trainer/bot';
 const PORT = parseInt(process.env.PORT || '3456', 10);
+const TUNNEL_PORT = parseInt(process.env.MONITOR_TUNNEL_PORT || '3457', 10);
+
+// In-memory bot statuses received via POST /api/bot/status
+const botStatusMap = new Map();
 
 async function sshCmd(cmd) {
   try {
@@ -66,15 +70,6 @@ async function writeFile(relPath, data) {
 
 async function writeFileLocked(relPath, data) {
   return withFileLock(relPath, () => writeFile(relPath, data));
-}
-
-async function getBotStatuses() {
-  const r = await sshCmd(`for f in ${DATA_PATH}/bot_status_*.json; do [ -f "$f" ] && cat "$f" && echo "===BOTSTATUS==="; done`);
-  if (!r.ok || !r.data) return [];
-  const parts = r.data.split('===BOTSTATUS===').filter(Boolean);
-  return parts.map(p => {
-    try { return JSON.parse(p.trim()); } catch { return null; }
-  }).filter(Boolean);
 }
 
 async function getArrayLength(relPath) {
@@ -166,7 +161,6 @@ async function getMatchups() {
     const myDeck = rec.deckName || botDecks[rec.playerName];
     if (!myDeck) continue;
 
-    // Determine opponent name by looking for the other known bot
     const oppName = Object.keys(botDecks).find(n => n !== rec.playerName);
     const oppDeck = oppName ? botDecks[oppName] : null;
     if (!oppDeck) continue;
@@ -215,6 +209,44 @@ function sendJSON(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+// SSH reverse tunnel management
+let tunnelProcess = null;
+
+function startTunnel() {
+  if (tunnelProcess) {
+    try { tunnelProcess.kill(); } catch {}
+  }
+  console.log(`Starting SSH tunnel: -R ${TUNNEL_PORT}:localhost:${PORT}`);
+  tunnelProcess = spawn('ssh', [
+    '-o', 'ServerAliveInterval=30',
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=5',
+    '-o', 'StrictHostKeyChecking=no',
+    '-R', `${TUNNEL_PORT}:localhost:${PORT}`,
+    '-N',
+    `${SSH_USER}@${SSH_HOST}`
+  ], { stdio: 'ignore' });
+  tunnelProcess.on('exit', (code, signal) => {
+    if (code !== 0 && !tunnelProcess.killed) {
+      console.log(`Tunnel exited (code ${code}), restarting in 5s...`);
+      setTimeout(startTunnel, 5000);
+    }
+  });
+  tunnelProcess.on('error', (err) => {
+    console.error('Tunnel error:', err.message);
+    setTimeout(startTunnel, 5000);
+  });
+  tunnelProcess.unref();
+}
+
+function stopTunnel() {
+  if (tunnelProcess) {
+    try { tunnelProcess.kill(); } catch {}
+    tunnelProcess = null;
+  }
+}
+
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -238,12 +270,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Bot status POST (from bots via SSH tunnel)
+  if (url.pathname === '/api/bot/status' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (body.id && body.state) {
+      body.updatedAt = Date.now();
+      botStatusMap.set(body.id, body);
+    }
+    sendJSON(res, 200, { ok: true });
+    return;
+  }
+
   if (url.pathname === '/api/status' && req.method === 'GET') {
-    const [sshCheck, stats, recordingsCount, botStatuses, serverInfo, weightsMtime, recordingsMtime, botDecks] = await Promise.all([
+    const [sshCheck, stats, recordingsCount, serverInfo, weightsMtime, recordingsMtime, botDecks] = await Promise.all([
       sshCmd('echo ok'),
       readFile('stats.json'),
       getArrayLength('recordings.json'),
-      getBotStatuses(),
       getServerInfo(),
       getFileMtime('weights.json'),
       getFileMtime('recordings.json'),
@@ -256,7 +298,7 @@ const server = http.createServer(async (req, res) => {
       recordingsCount,
       weightsModified: weightsMtime || null,
       recordingsModified: recordingsMtime || null,
-      bots: botStatuses,
+      bots: Array.from(botStatusMap.values()),
       botDecks,
       server: serverInfo,
       sshOk: sshCheck.ok,
@@ -270,7 +312,7 @@ const server = http.createServer(async (req, res) => {
     const name = body.name || '';
     if (!name) { sendJSON(res, 400, { error: 'name required' }); return; }
     const escaped = name.replace(/'/g, "'\\''");
-    const pidCmd = `nohup /usr/bin/env BOT_NAME='${escaped}' node ${BOT_DIR}/bot.js > /dev/null 2>&1 & PID=$!; echo $PID > ${DATA_PATH}/bot_pid_${escaped}; echo $PID`;
+    const pidCmd = `nohup /usr/bin/env MONITOR_URL='http://localhost:${TUNNEL_PORT}' BOT_NAME='${escaped}' node ${BOT_DIR}/bot.js > /dev/null 2>&1 & PID=$!; echo $PID > ${DATA_PATH}/bot_pid_${escaped}; echo $PID`;
     const r = await sshCmd(pidCmd);
     if (r.ok) sendJSON(res, 200, { ok: true, pid: r.data, name });
     else sendJSON(res, 500, { error: r.error });
@@ -364,6 +406,12 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`SWU Bot Monitor started at http://localhost:${PORT}`);
   console.log(`SSH: ${SSH_USER}@${SSH_HOST}`);
+  console.log(`Tunnel port: ${TUNNEL_PORT}`);
   console.log(`Bot dir: ${BOT_DIR}`);
   console.log(`Data: ${DATA_PATH}`);
+  startTunnel();
 });
+
+process.on('exit', stopTunnel);
+process.on('SIGINT', () => { stopTunnel(); process.exit(); });
+process.on('SIGTERM', () => { stopTunnel(); process.exit(); });

@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const { NeuralNet } = require('./model');
 
 const DATA_DIR = path.join(__dirname, '..', 'server', 'data');
+const MONITOR_URL = process.env.MONITOR_URL || '';
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -70,6 +72,33 @@ async function saveTrainingStats(stats) {
   fs.writeFileSync(path.join(DATA_DIR, 'stats.json'), JSON.stringify(stats, null, 2), 'utf8');
 }
 
+async function postToMonitor(endpoint, data) {
+  if (!MONITOR_URL) return;
+  try {
+    const url = new URL(MONITOR_URL);
+    const body = JSON.stringify(data);
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: url.hostname,
+        port: parseInt(url.port, 10) || 80,
+        path: endpoint,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        },
+        timeout: 3000
+      }, (res) => {
+        res.resume();
+        resolve();
+      });
+      req.on('error', () => resolve());
+      req.write(body);
+      req.end();
+    });
+  } catch { /* ignore */ }
+}
+
 async function saveBotStatus(id, name, status) {
   ensureDir();
   const data = {
@@ -83,6 +112,7 @@ async function saveBotStatus(id, name, status) {
     updatedAt: Date.now()
   };
   fs.writeFileSync(path.join(DATA_DIR, `bot_status_${id}.json`), JSON.stringify(data, null, 2), 'utf8');
+  await postToMonitor('/api/bot/status', data);
 }
 
 module.exports = {
