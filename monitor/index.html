@@ -64,26 +64,27 @@
   .stat-value { font-weight: 500; }
 
   .bot-cards {
-    display: flex; flex-wrap: wrap; gap: 12px;
+    display: flex; flex-wrap: wrap; gap: 10px;
   }
   .bot-card {
     background: rgba(255,255,255,0.03);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 14px 16px;
-    min-width: 200px;
-    flex: 1 1 200px;
+    padding: 12px 14px;
+    min-width: 170px;
+    flex: 1 1 170px;
+    position: relative;
   }
   .bot-card-header {
     display: flex; align-items: center; gap: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 2px;
   }
   .bot-name {
     font-size: 14px; font-weight: 600;
   }
   .bot-state {
-    font-size: 20px; font-weight: 700;
-    margin-bottom: 4px;
+    font-size: 18px; font-weight: 700;
+    margin-bottom: 2px;
   }
   .bot-state.ingame { color: var(--accent); }
   .bot-state.inqueue { color: var(--green); }
@@ -95,17 +96,56 @@
   .bot-state.unknown { color: var(--dim); }
   .bot-detail {
     font-size: 12px; color: var(--dim);
-    line-height: 1.6;
+    line-height: 1.5;
   }
   .bot-detail strong { color: var(--text); font-weight: 500; }
   .bot-time {
     font-size: 10px; color: var(--dim);
-    margin-top: 6px;
+    margin-top: 4px;
   }
   .bot-empty {
     color: var(--dim); font-size: 13px;
     padding: 8px 0;
   }
+  .bot-remove {
+    position: absolute; top: 8px; right: 8px;
+    background: none; border: 1px solid var(--border); color: var(--red);
+    border-radius: 4px; padding: 2px 6px; font-size: 10px; cursor: pointer;
+    font-family: inherit;
+  }
+  .bot-remove:hover { background: rgba(248,113,113,0.15); }
+
+  .add-bot-area {
+    display: flex; gap: 8px; margin-bottom: 12px; align-items: center;
+  }
+  .add-bot-area input {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 10px; color: var(--text); font-size: 12px; font-family: inherit;
+    flex: 1;
+  }
+  .add-bot-area input:focus { outline: none; border-color: var(--accent); }
+  .btn {
+    background: var(--accent); color: #000; border: none; border-radius: 4px;
+    padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+    font-family: inherit; white-space: nowrap;
+  }
+  .btn:hover { filter: brightness(1.2); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn-danger { background: var(--red); color: #fff; }
+
+  .training-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;
+    border: 1px solid var(--orange);
+    background: rgba(251,146,60,0.08);
+    font-size: 13px;
+  }
+  .training-banner .spinner {
+    width: 12px; height: 12px; border: 2px solid var(--orange);
+    border-top-color: transparent; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .mem-bar {
     width: 100%; height: 6px; background: var(--bar-bg); border-radius: 3px;
@@ -116,7 +156,6 @@
     background: linear-gradient(90deg, var(--accent), var(--green));
   }
   .mem-bar-fill.high { background: linear-gradient(90deg, var(--yellow), var(--red)); }
-  .timestamp { font-size: 11px; color: var(--dim); margin-top: 16px; text-align: center; }
   .footer-bar {
     display: flex; justify-content: center; gap: 24px; margin-top: 8px;
     font-size: 11px; color: var(--dim);
@@ -126,6 +165,7 @@
     .grid { grid-template-columns: 1fr; }
     header { flex-direction: column; gap: 8px; align-items: flex-start; }
     .bot-cards { flex-direction: column; }
+    .add-bot-area { flex-direction: column; }
   }
 </style>
 </head>
@@ -142,6 +182,11 @@
 <div class="grid">
   <div class="card">
     <h2>Bot Processes</h2>
+    <div class="add-bot-area">
+      <input type="text" id="botNameInput" placeholder="Bot-3" value="Bot-3">
+      <button class="btn" id="addBotBtn">+ Add</button>
+    </div>
+    <div id="trainingBanner"></div>
     <div id="botStatuses">
       <div class="bot-empty">Connecting to server...</div>
     </div>
@@ -155,6 +200,7 @@
       <div class="stat-row"><span class="stat-label">Accuracy</span><span class="stat-value" id="accuracy">-</span></div>
       <div class="stat-row"><span class="stat-label">Examples</span><span class="stat-value" id="examples">-</span></div>
       <div class="stat-row"><span class="stat-label">Recordings</span><span class="stat-value" id="recordings">-</span></div>
+      <div class="stat-row"><span class="stat-label">Train Every</span><span class="stat-value">10 games</span></div>
     </div>
   </div>
 
@@ -255,15 +301,10 @@ function renderBotCard(bot) {
 
   if (bot.state === 'in_game') {
     detail += '<div>vs <strong>' + (bot.opponent || '?') + '</strong></div>';
-    detail += '<div>phase: <strong>' + (bot.phase || '?') + '</strong></div>';
-    if (bot.message && bot.message.length > 0) {
-      detail += '<div>action: <strong>' + bot.message.substring(0, 50) + '</strong></div>';
-    }
-  } else if (bot.message) {
-    detail += '<div>' + bot.message + '</div>';
   }
 
   return '<div class="bot-card">' +
+    '<button class="bot-remove" data-name="' + bot.name + '">&times;</button>' +
     '<div class="bot-card-header">' +
       '<span class="status-dot ' + dotColor + '"></span>' +
       '<span class="bot-name">' + bot.name + '</span>' +
@@ -298,12 +339,42 @@ function render(data) {
     sshEl.innerHTML = '<span class="status-dot red"></span> ' + (data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
   }
 
+  // Separate bots from trainer status
+  const bots = (data.bots || []).filter(b => b.id !== '_trainer');
+  const trainer = (data.bots || []).find(b => b.id === '_trainer');
+
+  // Training banner
+  const tbEl = document.getElementById('trainingBanner');
+  if (trainer && trainer.state === 'training') {
+    tbEl.innerHTML = '<div class="training-banner"><div class="spinner"></div> <strong>Training in progress...</strong> <span style="color:var(--dim)">| ' + (trainer.message || '') + '</span></div>';
+  } else {
+    tbEl.innerHTML = '';
+  }
+
   // Bot status cards
   const bpEl = document.getElementById('botStatuses');
-  if (!data.bots || data.bots.length === 0) {
+  if (bots.length === 0) {
     bpEl.innerHTML = '<div class="bot-empty">No bot processes found</div>';
   } else {
-    bpEl.innerHTML = '<div class="bot-cards">' + data.bots.map(renderBotCard).join('') + '</div>';
+    bpEl.innerHTML = '<div class="bot-cards">' + bots.map(renderBotCard).join('') + '</div>';
+
+    // Attach remove handlers
+    document.querySelectorAll('.bot-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.name;
+        if (!confirm('Remove ' + name + '?')) return;
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+          await fetch('/api/bots/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+          });
+        } catch {}
+        refresh();
+      });
+    });
   }
 
   // Training stats
@@ -356,6 +427,44 @@ function tick() {
   }
   document.getElementById('refreshBadge').textContent = countdown + 's';
 }
+
+// Add bot button
+document.getElementById('addBotBtn').addEventListener('click', async () => {
+  const input = document.getElementById('botNameInput');
+  const name = input.value.trim();
+  if (!name) return;
+  const btn = document.getElementById('addBotBtn');
+  btn.disabled = true;
+  btn.textContent = 'Adding...';
+  try {
+    const resp = await fetch('/api/bots/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const result = await resp.json();
+    if (result.ok) {
+      input.value = '';
+      // Auto-increment for next add
+      const match = name.match(/^Bot-(\d+)$/);
+      if (match) {
+        input.value = 'Bot-' + (parseInt(match[1]) + 1);
+      }
+    } else {
+      alert('Failed: ' + (result.error || 'unknown'));
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = '+ Add';
+  refresh();
+});
+
+// Enter key on bot name input
+document.getElementById('botNameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('addBotBtn').click();
+});
 
 refresh();
 setInterval(tick, 1000);

@@ -1,4 +1,6 @@
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats, saveBotStatus } = require('./storage');
 const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState } = require('./util');
@@ -9,7 +11,7 @@ const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 const BOT_NAME = process.env.BOT_NAME || 'Bot';
 const DECK_NAME = process.env.DECK_NAME || 'cad-bane';
 const SELF_PLAY_MODE = process.env.SELF_PLAY === 'true' || process.env.SELF_PLAY === '1';
-const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '5', 10);
+const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '10', 10);
 
 const serverUrl = new URL(SERVER_URL);
 const SERVER_HOST = serverUrl.hostname;
@@ -112,6 +114,16 @@ function createSocket(id, name) {
 async function runBot(id, name) {
   const deck = getDeck(DECK_NAME);
 
+  const botDir = path.join(__dirname, '..', 'server', 'data');
+  const pidFile = path.join(botDir, `bot_pid_${id}`);
+  try { fs.writeFileSync(pidFile, process.pid.toString(), 'utf8'); } catch {}
+
+  function getOpponentName(data) {
+    if (!data?.players) return null;
+    const opp = Object.entries(data.players).find(([, p]) => (p?.username || p?.name || '') !== name);
+    return opp?.[1]?.username || opp?.[1]?.name || null;
+  }
+
   await enterQueue(id, name, deck);
 
   const socket = await createSocket(id, name);
@@ -162,8 +174,11 @@ async function runBot(id, name) {
     }));
   }
 
+  let latestGameData = null;
+
   async function handleGameState(data) {
     if (!data || !data.players) return;
+    latestGameData = data;
 
     const now = Date.now();
     const sid = data.id;
@@ -175,8 +190,7 @@ async function runBot(id, name) {
       triedActionsMap.clear();
       recording = { gameId: sid, playerId: id, states: [], actions: [], timestamp: Date.now() };
       console.log(`${name} game started: ${sid}`);
-      const opponent = Object.entries(data.players || {}).find(([pid]) => pid !== id)?.[1]?.username || null;
-      saveBotStatus(id, name, { state: 'in_game', gameId: sid, phase: data.phase, opponent, message: 'Game started' }).catch(() => {});
+      saveBotStatus(id, name, { state: 'in_game', gameId: sid, phase: data.phase, opponent: getOpponentName(data), message: 'started' }).catch(() => {});
     }
     if (!recording) return;
 
@@ -188,12 +202,14 @@ async function runBot(id, name) {
       recording.winner = data.winners;
       recording.completedAt = Date.now();
       console.log(`${name} game ended. Winner:`, data.winners);
-      await saveBotStatus(id, name, { state: 'requeuing', message: `Game ended, winner: ${data.winners}` }).catch(() => {});
+      const winnerNames = (data.winners || []).map(w => w?.username || w?.name || w).join(',');
+      await saveBotStatus(id, name, { state: 'requeuing', message: `Winner: ${winnerNames || data.winners}` }).catch(() => {});
       await saveGameRecording(recording).catch(() => {});
       gamesPlayed++;
       recording = null;
 
       if (gamesPlayed % TRAIN_EVERY_N === 0) {
+        saveBotStatus('_trainer', 'Training', { state: 'training', message: 'Batch training...' }).catch(() => {});
         runTraining().catch(e => console.error('Training failed:', e));
       }
 
@@ -276,7 +292,6 @@ async function runBot(id, name) {
       triedActionsMap.set(currentHash, new Set([lastActionKeySent]));
     }
     console.log(`${name} action: ${lastActionKeySent}`);
-    await saveBotStatus(id, name, { state: 'in_game', gameId, phase: data.phase, opponent: Object.entries(data.players || {}).find(([pid]) => pid !== id)?.[1]?.username || null, message: lastActionKeySent }).catch(() => {});
     await sendAction(action);
   }
 
@@ -312,6 +327,9 @@ async function runBot(id, name) {
     }
 
     lastActionSentTime = Date.now();
+    if (gameId && latestGameData) {
+      saveBotStatus(id, name, { state: 'in_game', gameId, phase: latestGameData.phase, opponent: getOpponentName(latestGameData), message: action.type }).catch(() => {});
+    }
     await delay(200);
   }
 
@@ -346,7 +364,7 @@ async function runTraining() {
   stats.accuracy = acc;
   await saveTrainingStats(stats);
   console.log(`Training done: pref_acc=${(acc * 100).toFixed(2)}%`);
-  await saveBotStatus('training', 'Trainer', { state: 'idle', message: `Training done, acc=${(acc * 100).toFixed(2)}%` }).catch(() => {});
+  try { fs.unlinkSync(path.join(__dirname, '..', 'server', 'data', 'bot_status__trainer.json')); } catch {}
 }
 
 async function startBot(id, name) {
@@ -354,6 +372,7 @@ async function startBot(id, name) {
     await runBot(id, name);
   } catch (e) {
     console.error(`${name} error:`, e.message);
+    try { fs.unlinkSync(path.join(__dirname, '..', 'server', 'data', `bot_pid_${id}`)); } catch {}
     await delay(10000);
     startBot(id, name).catch(console.error);
   }

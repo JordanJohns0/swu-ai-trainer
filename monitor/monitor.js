@@ -9,7 +9,10 @@ const execFileAsync = promisify(execFile);
 const SSH_HOST = (process.env.MONITOR_SSH_HOST || '192.168.1.157').trim();
 const SSH_USER = (process.env.MONITOR_SSH_USER || 'jordan').trim();
 const DATA_PATH = process.env.DATA_PATH || '/home/jordan/swu/swu-ai-trainer/server/data';
+const BOT_DIR = process.env.BOT_DIR || '/home/jordan/swu/swu-ai-trainer/bot';
 const PORT = parseInt(process.env.PORT || '3456', 10);
+
+const BOT_ENV = `BOT_NAME="Bot-$NAME" DECK_NAME="cad-bane" SERVER_URL="http://localhost:3000"`;
 
 async function sshCmd(cmd) {
   try {
@@ -24,6 +27,16 @@ async function sshCmd(cmd) {
   } catch (e) {
     return { ok: false, error: e.stderr?.trim() || e.message };
   }
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let buf = '';
+    req.on('data', c => buf += c);
+    req.on('end', () => {
+      try { resolve(JSON.parse(buf)); } catch { resolve({}); }
+    });
+  });
 }
 
 async function readFile(relPath) {
@@ -81,6 +94,14 @@ async function getServerInfo() {
   return { load, memory, bootTime: uptimeR.ok && uptimeR.data ? uptimeR.data : null };
 }
 
+function sendJSON(res, status, data) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.end(JSON.stringify(data));
+}
+
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -93,7 +114,7 @@ const mimeTypes = {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
-  if (url.pathname === '/api/status') {
+  if (url.pathname === '/api/status' && req.method === 'GET') {
     const [sshCheck, stats, recordingsCount, botStatuses, serverInfo, weightsMtime, recordingsMtime] = await Promise.all([
       sshCmd('echo ok'),
       readFile('stats.json'),
@@ -104,7 +125,7 @@ const server = http.createServer(async (req, res) => {
       getFileMtime('recordings.json')
     ]);
 
-    const data = {
+    sendJSON(res, 200, {
       timestamp: Date.now(),
       stats: stats || { gamesTrained: 0, accuracy: 0, examples: 0, lastTrainedAt: null },
       recordingsCount,
@@ -114,13 +135,49 @@ const server = http.createServer(async (req, res) => {
       server: serverInfo,
       sshOk: sshCheck.ok,
       sshError: sshCheck.ok ? null : sshCheck.error
-    };
-
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
     });
-    res.end(JSON.stringify(data));
+    return;
+  }
+
+  if (url.pathname === '/api/bots/add' && req.method === 'POST') {
+    const body = await readBody(req);
+    const name = body.name || '';
+
+    if (!name) {
+      sendJSON(res, 400, { error: 'name required' });
+      return;
+    }
+
+    const escaped = name.replace(/'/g, "'\\''");
+    const pidCmd = `nohup /usr/bin/env BOT_NAME='${escaped}' DECK_NAME='cad-bane' node ${BOT_DIR}/bot.js > /dev/null 2>&1 & PID=$!; echo $PID > ${DATA_PATH}/bot_pid_${escaped}; echo $PID`;
+    const r = await sshCmd(pidCmd);
+
+    if (r.ok) {
+      sendJSON(res, 200, { ok: true, pid: r.data, name });
+    } else {
+      sendJSON(res, 500, { error: r.error });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/bots/remove' && req.method === 'POST') {
+    const body = await readBody(req);
+    const name = body.name || '';
+
+    if (!name) {
+      sendJSON(res, 400, { error: 'name required' });
+      return;
+    }
+
+    const escaped = name.replace(/'/g, "'\\''");
+    const killCmd = `PID=$(cat ${DATA_PATH}/bot_pid_${escaped} 2>/dev/null); if [ -n "$PID" ] && kill -0 $PID 2>/dev/null; then kill $PID 2>/dev/null; echo "killed $PID"; else echo "not running"; fi; rm -f ${DATA_PATH}/bot_pid_${escaped} ${DATA_PATH}/bot_status_${escaped}.json`;
+    const r = await sshCmd(killCmd);
+
+    if (r.ok) {
+      sendJSON(res, 200, { ok: true, result: r.data, name });
+    } else {
+      sendJSON(res, 500, { error: r.error });
+    }
     return;
   }
 
@@ -140,5 +197,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`SWU Bot Monitor started at http://localhost:${PORT}`);
   console.log(`SSH: ${SSH_USER}@${SSH_HOST}`);
+  console.log(`Bot dir: ${BOT_DIR}`);
   console.log(`Data: ${DATA_PATH}`);
 });
