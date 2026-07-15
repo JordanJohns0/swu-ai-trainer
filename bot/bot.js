@@ -133,6 +133,9 @@ async function runBot(id, name) {
     return opp?.[1]?.username || opp?.[1]?.name || null;
   }
 
+  const startupDelay = Math.floor(Math.random() * 5000);
+  console.log(`${name} waiting ${startupDelay}ms before first queue entry`);
+  await new Promise(r => setTimeout(r, startupDelay));
   await enterQueue(id, name, deck);
 
   const socket = await createSocket(id, name);

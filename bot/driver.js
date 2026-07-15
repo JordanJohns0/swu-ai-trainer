@@ -84,17 +84,17 @@ function sanitizeId(name) {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'bot';
 }
 
-function addBot(name, deckName) {
-  if (workers.has(name)) {
-    log(`already running: ${name}`);
+function addBot(botId, botName, deckName) {
+  if (workers.has(botId)) {
+    log(`already running: ${botId}`);
     return { ok: false, error: 'already running' };
   }
 
   const env = {
     ...process.env,
-    BOT_ID: name,
-    BOT_NAME: deckName || name,
-    DECK_NAME: deckName || name,
+    BOT_ID: botId,
+    BOT_NAME: botName || deckName || botId,
+    DECK_NAME: deckName || botId,
     SERVER_URL: process.env.SERVER_URL || 'http://localhost:9500'
   };
 
@@ -104,34 +104,34 @@ function addBot(name, deckName) {
   });
 
   let output = '';
-  child.stdout.on('data', (d) => { output += d.toString(); console.log(`[${name}] ${d.toString().trimEnd()}`); });
-  child.stderr.on('data', (d) => { output += d.toString(); console.error(`[${name}] ${d.toString().trimEnd()}`); });
+  child.stdout.on('data', (d) => { output += d.toString(); console.log(`[${botId}] ${d.toString().trimEnd()}`); });
+  child.stderr.on('data', (d) => { output += d.toString(); console.error(`[${botId}] ${d.toString().trimEnd()}`); });
 
   child.on('message', (msg) => {
     if (msg && msg.type === 'status') {
-      statusCache.set(msg.id, { ...msg, updatedAt: Date.now(), deckName: deckName || name });
+      statusCache.set(msg.id, { ...msg, updatedAt: Date.now(), deckName: deckName || botName || botId });
       log(`IPC status from ${msg.name}: ${msg.state}`);
     } else {
-      log(`IPC unknown from ${name}: ${JSON.stringify(msg).substring(0, 100)}`);
+      log(`IPC unknown from ${botId}: ${JSON.stringify(msg).substring(0, 100)}`);
     }
   });
 
   child.on('exit', (code, signal) => {
-    log(`${name} exited (code=${code}, signal=${signal})`);
-    statusCache.set(name, { id: name, name: deckName || name, state: 'exited', exitCode: code, message: `exited with code ${code}`, updatedAt: Date.now(), errors: output, deckName: deckName || name });
-    workers.delete(name);
+    log(`${botId} exited (code=${code}, signal=${signal})`);
+    statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'exited', exitCode: code, message: `exited with code ${code}`, updatedAt: Date.now(), errors: output, deckName: deckName || botName || botId });
+    workers.delete(botId);
   });
 
   child.on('error', (err) => {
-    log(`${name} error: ${err.message}`);
-    statusCache.set(name, { id: name, name: deckName || name, state: 'error', message: err.message, updatedAt: Date.now(), errors: output, deckName: deckName || name });
-    workers.delete(name);
+    log(`${botId} error: ${err.message}`);
+    statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'error', message: err.message, updatedAt: Date.now(), errors: output, deckName: deckName || botName || botId });
+    workers.delete(botId);
   });
 
-  workers.set(name, { child, startedAt: Date.now() });
-  statusCache.set(name, { id: name, name: deckName || name, state: 'starting', message: 'Worker forked', updatedAt: Date.now(), deckName: deckName || name });
+  workers.set(botId, { child, startedAt: Date.now() });
+  statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'starting', message: 'Worker forked', updatedAt: Date.now(), deckName: deckName || botName || botId });
 
-  log(`added: ${name} (pid ${child.pid}, deck: ${deckName})`);
+  log(`added: ${botId} (pid ${child.pid}, deck: ${deckName})`);
   return { ok: true, pid: child.pid };
 }
 
@@ -150,14 +150,19 @@ function removeBot(name) {
 function initBotsFromDecks() {
   const decks = readDecks();
   const defaultDeck = 'cad-bane';
+  const INSTANCES_PER_DECK = 2;
   let spawned = 0;
 
   for (const deck of decks) {
     const deckName = deck.name;
     if (!deckName || deckName === defaultDeck) continue;
-    const botId = sanitizeId(deckName);
-    const result = addBot(botId, deckName);
-    if (result.ok) spawned++;
+    const baseId = sanitizeId(deckName);
+    for (let i = 1; i <= INSTANCES_PER_DECK; i++) {
+      const botId = `${baseId}-${i}`;
+      const botName = `${deckName} #${i}`;
+      const result = addBot(botId, botName, deckName);
+      if (result.ok) spawned++;
+    }
   }
 
   log(`initialized ${spawned} bot(s) from ${decks.length} custom deck(s)`);

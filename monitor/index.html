@@ -369,12 +369,14 @@ function renderDecks(decks) {
   });
 }
 
+let matchupsHadData = false;
 function renderMatchups(matchups) {
   const el = document.getElementById('matchupTable');
   if (!matchups || !matchups.pairs || matchups.pairs.length === 0) {
-    el.innerHTML = '<div class="matchup-empty">No matchup data yet. Play more games!</div>';
+    if (!matchupsHadData) el.innerHTML = '<div class="matchup-empty">No matchup data yet. Play more games!</div>';
     return;
   }
+  matchupsHadData = true;
   let html = '<table class="matchup-table"><thead><tr><th>Deck A</th><th>Deck B</th><th>A Wins</th><th>B Wins</th><th>Win%</th><th>Games</th></tr></thead><tbody>';
   for (const p of matchups.pairs) {
     const total = p.aWins + p.bWins || 1;

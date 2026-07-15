@@ -157,10 +157,17 @@ function deckName(deck) {
   return `${leader} / ${base}`;
 }
 
+let lastMatchups = { pairs: [], deckList: [] };
 async function getMatchups() {
   const r = await driverCurl('/api/matchups');
-  if (!r.ok || r.data === '___DRIVER_DOWN___') return { pairs: [], deckList: [] };
-  try { return JSON.parse(r.data); } catch { return { pairs: [], deckList: [] }; }
+  if (!r.ok || r.data === '___DRIVER_DOWN___') return lastMatchups;
+  try {
+    const parsed = JSON.parse(r.data);
+    if (parsed && Array.isArray(parsed.pairs)) lastMatchups = parsed;
+    return parsed;
+  } catch {
+    return lastMatchups;
+  }
 }
 
 async function getFallbackBotStatuses() {
