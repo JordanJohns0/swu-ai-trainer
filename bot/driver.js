@@ -5,7 +5,9 @@ const { fork } = require('child_process');
 
 const PORT = parseInt(process.env.DRIVER_PORT || '3458', 10);
 const WORKER_PATH = path.join(__dirname, 'worker.js');
-const DECKS_PATH = path.join(__dirname, '..', 'server', 'data', 'decks.json');
+const DATA_DIR = path.join(__dirname, '..', 'server', 'data');
+const DECKS_PATH = path.join(DATA_DIR, 'decks.json');
+const RECORDINGS_PATH = path.join(DATA_DIR, 'recordings.json');
 
 const workers = new Map();
 const statusCache = new Map();
@@ -15,16 +17,67 @@ function log(...args) {
   console.log(`[${t}] [DRIVER]`, ...args);
 }
 
-function readDecks() {
+function readJSON(filePath) {
   try {
-    if (!fs.existsSync(DECKS_PATH)) return [];
-    const raw = fs.readFileSync(DECKS_PATH, 'utf8');
-    const decks = JSON.parse(raw);
-    return Array.isArray(decks) ? decks : [];
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (e) {
-    log(`error reading decks: ${e.message}`);
-    return [];
+    log(`error reading ${path.basename(filePath)}: ${e.message}`);
+    return null;
   }
+}
+
+function readDecks() {
+  const decks = readJSON(DECKS_PATH);
+  return Array.isArray(decks) ? decks : [];
+}
+
+function getMatchups() {
+  const recordings = readJSON(RECORDINGS_PATH);
+  if (!Array.isArray(recordings)) return { pairs: [], deckList: [] };
+
+  const decks = readDecks();
+  const deckNames = decks.map(d => d.name).filter(Boolean);
+  deckNames.push('cad-bane');
+
+  const games = {};
+  for (const rec of recordings) {
+    if (!rec.gameId || !rec.playerName) continue;
+    if (!games[rec.gameId]) games[rec.gameId] = [];
+    games[rec.gameId].push(rec);
+  }
+
+  const pairMap = {};
+  for (const [gameId, recs] of Object.entries(games)) {
+    const decksInGame = {};
+    for (const rec of recs) {
+      if (rec.deckName) decksInGame[rec.playerName] = rec.deckName;
+    }
+    const names = Object.keys(decksInGame);
+    if (names.length < 2) continue;
+
+    let deckA, deckB, p1Name, p2Name;
+    p1Name = names[0]; deckA = decksInGame[p1Name];
+    p2Name = names[1]; deckB = decksInGame[p2Name];
+
+    const winner = recs[0].winner;
+    if (!winner) continue;
+    const w = Array.isArray(winner) ? winner[0] : winner;
+    const winnerName = w?.username || w?.name || (typeof w === 'string' ? w : null);
+    if (!winnerName) continue;
+
+    const pairId = [deckA, deckB].sort().join('||');
+    if (!pairMap[pairId]) pairMap[pairId] = { deckA, deckB, aWins: 0, bWins: 0, total: 0 };
+    pairMap[pairId].total++;
+    if (winnerName === p1Name) pairMap[pairId].aWins++;
+    else pairMap[pairId].bWins++;
+  }
+
+  const pairs = Object.values(pairMap)
+    .filter(p => p.total > 0)
+    .map(p => ({ ...p, ties: 0 }));
+
+  return { pairs, deckList: [...new Set(deckNames)] };
 }
 
 function sanitizeId(name) {
@@ -146,6 +199,13 @@ const server = http.createServer(async (req, res) => {
     if (!name) { sendJSON(res, 400, { error: 'name required' }); return; }
     const result = removeBot(name);
     sendJSON(res, result.ok ? 200 : 404, result);
+    return;
+  }
+
+  if (url.pathname === '/api/matchups' && method === 'GET') {
+    const matchups = getMatchups();
+    log(`matchups: ${matchups.pairs.length} pairs`);
+    sendJSON(res, 200, matchups);
     return;
   }
 

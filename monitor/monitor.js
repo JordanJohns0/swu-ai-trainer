@@ -158,63 +158,9 @@ function deckName(deck) {
 }
 
 async function getMatchups() {
-  const [recordings, botDecks, decks] = await Promise.all([
-    readFile('recordings.json'),
-    getBotDecks(),
-    getDecks()
-  ]);
-  if (!Array.isArray(recordings)) return { pairs: [], deckList: [] };
-
-  const deckNames = decks.map(d => d.name).filter(Boolean);
-  deckNames.push('cad-bane');
-
-  const games = {};
-  for (const rec of recordings) {
-    if (!rec.gameId || !rec.playerName) continue;
-    if (!games[rec.gameId]) games[rec.gameId] = [];
-    games[rec.gameId].push(rec);
-  }
-
-  const pairMap = {};
-  for (const [gameId, recs] of Object.entries(games)) {
-    const decksInGame = {};
-    for (const rec of recs) {
-      const d = rec.deckName || botDecks[rec.playerName];
-      if (d) decksInGame[rec.playerName] = d;
-    }
-    const names = Object.keys(decksInGame);
-
-    let deckA, deckB, p1Name, p2Name;
-    if (names.length >= 2) {
-      p1Name = names[0]; deckA = decksInGame[p1Name];
-      p2Name = names[1]; deckB = decksInGame[p2Name];
-    } else if (names.length === 1 && Object.keys(botDecks).length >= 2) {
-      p1Name = names[0]; deckA = decksInGame[p1Name];
-      p2Name = Object.keys(botDecks).find(n => n !== p1Name);
-      deckB = p2Name ? botDecks[p2Name] : null;
-      if (!p2Name || !deckB) continue;
-    } else {
-      continue;
-    }
-
-    const winner = recs[0].winner;
-    if (!winner) continue;
-    const w = Array.isArray(winner) ? winner[0] : winner;
-    const winnerName = w?.username || w?.name || (typeof w === 'string' ? w : null);
-    if (!winnerName) continue;
-
-    const pairId = [deckA, deckB].sort().join('||');
-    if (!pairMap[pairId]) pairMap[pairId] = { deckA, deckB, aWins: 0, bWins: 0, total: 0 };
-    pairMap[pairId].total++;
-    if (winnerName === p1Name) pairMap[pairId].aWins++;
-    else pairMap[pairId].bWins++;
-  }
-
-  const pairs = Object.values(pairMap)
-    .filter(p => p.total > 0)
-    .map(p => ({ ...p, ties: 0 }));
-
-  return { pairs, deckList: [...new Set(deckNames)] };
+  const r = await driverCurl('/api/matchups');
+  if (!r.ok || r.data === '___DRIVER_DOWN___') return { pairs: [], deckList: [] };
+  try { return JSON.parse(r.data); } catch { return { pairs: [], deckList: [] }; }
 }
 
 async function getFallbackBotStatuses() {

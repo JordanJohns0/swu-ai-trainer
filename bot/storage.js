@@ -51,7 +51,8 @@ async function loadGameRecordings() {
 
 async function saveGameRecording(recording) {
   const recordings = await loadGameRecordings();
-  const idx = recordings.findIndex(r => r.gameId === recording.gameId);
+  // Key on gameId + playerName so both players' recordings persist
+  const idx = recordings.findIndex(r => r.gameId === recording.gameId && r.playerName === recording.playerName);
   if (idx >= 0) recordings[idx] = recording;
   else recordings.push(recording);
   ensureDir();
