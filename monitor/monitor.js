@@ -523,6 +523,9 @@ server.listen(PORT, () => {
   log(`Driver port: ${DRIVER_PORT}`);
   startTunnel();
   ensureDriver().then(ok => log(`Driver initial check: ${ok ? 'running' : 'not running'}`));
+  setInterval(() => {
+    ensureDriver().then(ok => { if (!ok) log('Driver restart attempted'); });
+  }, 30000);
 });
 
 process.on('exit', stopTunnel);

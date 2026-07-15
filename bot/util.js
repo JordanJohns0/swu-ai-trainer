@@ -162,7 +162,10 @@ function getSelectableCardIds(gameState) {
     if (prompt && prompt.displayCards && prompt.displayCards.length > 0) {
       for (const card of prompt.displayCards) {
         const cid = card.cardUuid || card.uuid || card.id;
-        if (cid && card.selectable && !card.selected && !seen.has(cid)) { seen.add(cid); ids.push(cid); }
+        const mode = prompt.selectCardMode || 'none';
+        if (cid && !card.selected && !seen.has(cid)) {
+          if (card.selectable || (mode !== 'none')) { seen.add(cid); ids.push(cid); }
+        }
       }
     }
   }
@@ -207,6 +210,20 @@ function getAvailableActions(gameState) {
             const btnText = btn.text || btn.label || btn.name || btn.title || btn.arg || btn.command || 'Action';
             actions.push({ type: 'menuButton', arg: btn.arg ?? btn.value ?? btn.id ?? cardId, uuid: btn.uuid ?? prompt.promptUuid ?? '', command: btn.command || '', text: btnText, cardId: cardId });
           }
+        }
+        break;
+      }
+    }
+    // 5th pass: displayCards with selectCardMode but no perCardButtons
+    for (const playerId of Object.keys(gameState.players)) {
+      const player = gameState.players[playerId];
+      const prompt = player?.promptState;
+      if (prompt && prompt.displayCards && prompt.displayCards.length > 0 &&
+          prompt.selectCardMode && prompt.selectCardMode !== 'none' &&
+          (!prompt.perCardButtons || prompt.perCardButtons.length === 0)) {
+        for (const card of prompt.displayCards) {
+          const cardId = card.uuid || card.id;
+          if (cardId && !card.selected) actions.push({ type: 'cardClicked', cardId });
         }
         break;
       }
