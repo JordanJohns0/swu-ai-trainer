@@ -43,9 +43,29 @@ async function readFile(relPath) {
   try { return JSON.parse(r.data); } catch { return null; }
 }
 
+const fileLocks = {};
+function withFileLock(relPath, fn) {
+  if (!fileLocks[relPath]) fileLocks[relPath] = Promise.resolve();
+  const prev = fileLocks[relPath];
+  let release;
+  fileLocks[relPath] = new Promise(r => { release = r; });
+  return prev.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  });
+}
+
 async function writeFile(relPath, data) {
-  const escaped = JSON.stringify(data).replace(/'/g, "'\\''");
-  return await sshCmd(`cat > ${DATA_PATH}/${relPath} <<'ENDOFFILE'\n${JSON.stringify(data, null, 2)}\nENDOFFILE`);
+  const content = JSON.stringify(data, null, 2);
+  const base64 = Buffer.from(content).toString('base64');
+  return await sshCmd(`echo ${base64} | base64 -d > ${DATA_PATH}/${relPath}`);
+}
+
+async function writeFileLocked(relPath, data) {
+  return withFileLock(relPath, () => writeFile(relPath, data));
 }
 
 async function getBotStatuses() {
@@ -97,7 +117,7 @@ async function getDecks() {
 }
 
 async function saveDecks(decks) {
-  return await writeFile('decks.json', decks);
+  return await writeFileLocked('decks.json', decks);
 }
 
 async function getBotDecks() {
@@ -107,7 +127,7 @@ async function getBotDecks() {
 }
 
 async function saveBotDecks(config) {
-  return await writeFile('bot_decks.json', config);
+  return await writeFileLocked('bot_decks.json', config);
 }
 
 function deckName(deck) {

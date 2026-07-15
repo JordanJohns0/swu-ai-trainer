@@ -269,6 +269,8 @@
 const REFRESH_INTERVAL = 5;
 let countdown = REFRESH_INTERVAL;
 
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 function pad(n) { return String(n).padStart(2, '0'); }
 
 function fmtTime(ts) {
@@ -310,24 +312,25 @@ function stateClass(s) {
 function renderBotCard(bot, decks, botDecks) {
   const stale = (Date.now() - bot.updatedAt) > 60000;
   const dotColor = stale ? 'yellow' : stateDot(bot.state);
+  const botNameEsc = escHtml(bot.name);
   const currentDeck = botDecks && botDecks[bot.name] ? botDecks[bot.name] : '';
   const opts = '<option value="">(default)</option>' + decks.map(d =>
-    '<option value="' + d.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;') + '"' +
-    (d.name === currentDeck ? ' selected' : '') + '>' + d.name + '</option>'
+    '<option value="' + escHtml(d.name) + '"' +
+    (d.name === currentDeck ? ' selected' : '') + '>' + escHtml(d.name) + '</option>'
   ).join('');
   let detail = '';
   if (bot.state === 'in_game') {
-    detail += '<div>vs <strong>' + (bot.opponent || '?') + '</strong></div>';
+    detail += '<div>vs <strong>' + escHtml(bot.opponent || '?') + '</strong></div>';
   }
   return '<div class="bot-card">' +
-    '<button class="bot-remove" data-name="' + bot.name + '">&times;</button>' +
+    '<button class="bot-remove" data-name="' + botNameEsc + '">&times;</button>' +
     '<div class="bot-card-header">' +
       '<span class="status-dot ' + dotColor + '"></span>' +
-      '<span class="bot-name">' + bot.name + '</span>' +
+      '<span class="bot-name">' + botNameEsc + '</span>' +
     '</div>' +
     '<div class="bot-state ' + stateClass(bot.state) + '">' + stateLabel(bot.state) + '</div>' +
     '<div class="bot-detail">' + detail + '</div>' +
-    '<select class="bot-deck-select" data-bot="' + bot.name + '">' + opts + '</select>' +
+    '<select class="bot-deck-select" data-bot="' + botNameEsc + '">' + opts + '</select>' +
     '<div class="bot-time">' + fmtTime(bot.updatedAt) + '</div>' +
   '</div>';
 }
@@ -366,8 +369,8 @@ function renderDecks(decks) {
   }
   el.innerHTML = decks.map(d =>
     '<div class="deck-entry">' +
-      '<span class="deck-name">' + d.name + '</span>' +
-      '<button class="deck-del" data-name="' + d.name.replace(/"/g,'&quot;') + '">&times;</button>' +
+      '<span class="deck-name">' + escHtml(d.name) + '</span>' +
+      '<button class="deck-del" data-name="' + escHtml(d.name) + '">&times;</button>' +
     '</div>'
   ).join('');
   document.querySelectorAll('.deck-del').forEach(btn => {
@@ -396,8 +399,8 @@ function renderMatchups(matchups) {
     const total = p.aWins + p.bWins || 1;
     const pct = ((Math.max(p.aWins, p.bWins) / total) * 100).toFixed(0);
     html += '<tr>' +
-      '<td class="left">' + p.deckA + '</td>' +
-      '<td class="left">' + p.deckB + '</td>' +
+      '<td class="left">' + escHtml(p.deckA) + '</td>' +
+      '<td class="left">' + escHtml(p.deckB) + '</td>' +
       '<td class="highlight">' + p.aWins + '</td>' +
       '<td>' + p.bWins + '</td>' +
       '<td>' + pct + '%</td>' +
@@ -425,7 +428,7 @@ async function refresh() {
   // SSH status
   const sshEl = document.getElementById('sshStatus');
   if (data.sshOk) sshEl.innerHTML = '<span class="status-dot green"></span> connected';
-  else sshEl.innerHTML = '<span class="status-dot red"></span> ' + (data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
+  else sshEl.innerHTML = '<span class="status-dot red"></span> ' + escHtml(data.sshError ? data.sshError.substring(0, 60) : 'disconnected');
 
   // Separate bots from trainer
   const bots = (data.bots || []).filter(b => b.id !== '_trainer');

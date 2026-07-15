@@ -354,7 +354,7 @@ async function runBot(id, name) {
 
 async function runTraining() {
   console.log('Batch training...');
-  await saveBotStatus('training', 'Trainer', { state: 'training', message: 'Batch training in progress' }).catch(() => {});
+  await saveBotStatus('_trainer', 'Training', { state: 'training', message: 'Batch training in progress' }).catch(() => {});
   const recordings = await loadGameRecordings();
   if (recordings.length === 0) return;
 
