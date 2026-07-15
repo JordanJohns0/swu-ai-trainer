@@ -90,7 +90,7 @@ function createSocket(id, name) {
     sock.on('connect_error', (err) => console.error(`${name} connection error:`, err.message));
     sock.on('disconnect', (reason) => {
       if (reason !== 'io server disconnect') console.log(`${name} disconnected:`, reason);
-      if (reason === 'io server disconnect' && !gameId) {
+      if (reason === 'io server disconnect') {
         console.log(`${name} server disconnected us, restarting...`);
         setTimeout(() => startBot(id, name).catch(console.error), 5000);
       }
