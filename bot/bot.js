@@ -12,7 +12,7 @@ const BOT_NAME = process.env.BOT_NAME || 'Bot';
 const BOT_ID = process.env.BOT_ID || 'bot1';
 const DECK_NAME = process.env.DECK_NAME || 'cad-bane';
 const SELF_PLAY_MODE = process.env.SELF_PLAY === 'true' || process.env.SELF_PLAY === '1';
-const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '10', 10);
+const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '50', 10);
 
 const serverUrl = new URL(SERVER_URL);
 const SERVER_HOST = serverUrl.hostname;
