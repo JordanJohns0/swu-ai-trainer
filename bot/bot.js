@@ -90,6 +90,10 @@ function createSocket(id, name) {
     sock.on('connect_error', (err) => console.error(`${name} connection error:`, err.message));
     sock.on('disconnect', (reason) => {
       if (reason !== 'io server disconnect') console.log(`${name} disconnected:`, reason);
+      if (reason === 'io server disconnect' && !gameId) {
+        console.log(`${name} server disconnected us, restarting...`);
+        setTimeout(() => startBot(id, name).catch(console.error), 5000);
+      }
     });
 
     let settled = false;
@@ -176,6 +180,7 @@ async function runBot(id, name) {
 
     if (data.winners && data.winners.length > 0 && !pendingRequeue) {
       pendingRequeue = true;
+      gameId = null;
       recording.winner = data.winners;
       recording.completedAt = Date.now();
       console.log(`${name} game ended. Winner:`, data.winners);
@@ -304,11 +309,7 @@ async function runBot(id, name) {
 
   socket.on('connection_error', (msg) => {
     console.error(`${name} connection error from server:`, msg);
-    if (pendingRequeue) {
-      setTimeout(() => {
-        enterQueue(id, name, deck).catch(() => {});
-      }, 5000);
-    }
+    // Server will disconnect us; let the disconnect handler restart
   });
 
   socket.on('gamestate', handleGameState);

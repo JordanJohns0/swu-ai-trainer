@@ -1,6 +1,10 @@
 const { NeuralNet, encodeGameState, encodeActions } = require('./model');
 const { getAvailableActions } = require('./util');
 
+function yieldToEventLoop() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
 async function trainModelRanking(model, games, params = {}) {
   const {
     lrStart = 0.003, lrEnd = 0.001,
@@ -66,6 +70,7 @@ async function trainModelRanking(model, games, params = {}) {
     const avgViolations = totalStates > 0 ? totalViolations / totalStates : 0;
     console.log(`Epoch ${epoch + 1}: lr=${epochLr.toFixed(5)} mWin=${epochMarginWin.toFixed(3)} mLoss=${epochMarginLoss.toFixed(3)} topK=${topK} avg_violations=${avgViolations.toFixed(4)} pref_acc=${(prefAcc * 100).toFixed(2)}% (${correctPref}/${totalPref})`);
     prefAccs.push(prefAcc);
+    await yieldToEventLoop();
   }
   return { history: { pref_acc: prefAccs } };
 }
