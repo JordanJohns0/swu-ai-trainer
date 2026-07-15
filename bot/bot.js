@@ -1,7 +1,7 @@
 const http = require('http');
 const io = require('socket.io-client');
 const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats } = require('./storage');
-const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState, setBotPlayerId } = require('./util');
+const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
 
@@ -105,7 +105,6 @@ function createSocket(id, name) {
 }
 
 async function runBot(id, name) {
-  setBotPlayerId(id);
   const deck = getDeck(DECK_NAME);
 
   await enterQueue(id, name, deck);
@@ -213,12 +212,12 @@ async function runBot(id, name) {
     const currentHash = computeRichHash(data);
     const tried = triedActionsMap.get(currentHash);
     if (currentHash === lastStateHash && tried) {
-      const player = getMyPlayerState(data);
+      const player = getMyPlayerState(data, id);
       const isDistributePrompt = player?.promptState?.promptType === 'distributeAmongTargets';
 
       if (isDistributePrompt) {
         // For distribute prompts, use selectAiAction which varies distribution strategies
-        const action = await selectAiAction(data, SELF_PLAY_MODE);
+        const action = await selectAiAction(data, SELF_PLAY_MODE, id);
         if (action) {
           const key = getActionKey(action);
           // Track under a variant key so different distributions count as different tries
@@ -253,7 +252,7 @@ async function runBot(id, name) {
     }
     console.log(`${name} hash new: ${currentHash}`);
 
-    const action = await selectAiAction(data, SELF_PLAY_MODE);
+    const action = await selectAiAction(data, SELF_PLAY_MODE, id);
     if (!action) {
       console.log(`${name} no action [${JSON.stringify(getPlayerStateSummary(data))}]`);
       return;

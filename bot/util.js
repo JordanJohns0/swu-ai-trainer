@@ -10,7 +10,6 @@ const MENU_BUTTON_ARGS = [
 let cachedModel = null;
 let failedActionKeys = new Set();
 let currentPlayerId = null;
-let botPlayerId = null;
 let lastSentStateHash = {};
 let lastSentActionKey = {};
 
@@ -74,7 +73,7 @@ function findCardInfo(cardId, gameState) {
   return null;
 }
 
-function describeAction(a, gameState) {
+function describeAction(a, gameState, playerId) {
   if (a.type === 'cardClicked') {
     if (!gameState) return a.cardId || 'Select card';
     const info = findCardInfo(a.cardId, gameState);
@@ -85,7 +84,7 @@ function describeAction(a, gameState) {
     if (info.power != null) stats.push('P:' + info.power);
     if (info.hp != null) stats.push('HP:' + info.hp);
     const suffix = stats.length ? ' (' + stats.join(' ') + ')' : '';
-    const player = getMyPlayerState(gameState);
+    const player = getMyPlayerState(gameState, playerId);
     const mode = player?.promptState?.selectCardMode || '';
     if (mode !== '' && mode !== 'none') {
       if (mode.includes('resource')) return `Resource ${name}${suffix}`;
@@ -236,30 +235,30 @@ function getActivePlayerId(gameState) {
   return null;
 }
 
-function getMyPlayerState(gameState) {
+function getMyPlayerState(gameState, playerId) {
   if (!gameState || !gameState.players) return null;
   const playerIds = Object.keys(gameState.players);
 
-  // Check the current bot's own player FIRST (critical for self-play)
-  if (botPlayerId && playerIds.includes(botPlayerId)) {
-    const ps = gameState.players[botPlayerId].promptState;
+  // If playerId provided, check that player first (critical for self-play)
+  if (playerId && playerIds.includes(playerId)) {
+    const ps = gameState.players[playerId].promptState;
     if (ps && ps.promptType !== undefined && ps.promptType !== null && ps.promptType !== '' && ps.promptType !== false) {
-      currentPlayerId = botPlayerId;
-      return gameState.players[botPlayerId];
+      currentPlayerId = playerId;
+      return gameState.players[playerId];
     }
     if (ps && ps.selectCardMode && ps.selectCardMode !== 'none') {
-      currentPlayerId = botPlayerId;
-      return gameState.players[botPlayerId];
+      currentPlayerId = playerId;
+      return gameState.players[playerId];
     }
     if (ps && ps.buttons && ps.buttons.length > 0) {
-      currentPlayerId = botPlayerId;
-      return gameState.players[botPlayerId];
+      currentPlayerId = playerId;
+      return gameState.players[playerId];
     }
-    // Current bot has no actionable prompt — don't act for other players
+    // No actionable prompt for this player
     return null;
   }
 
-  // Only reachable before botPlayerId is set (first call): check any player
+  // Fallback auto-detect (playerId not provided)
   let foundId = null;
   for (const id of playerIds) {
     const ps = gameState.players[id].promptState;
@@ -280,7 +279,6 @@ function getMyPlayerState(gameState) {
     }
   }
   if (foundId) {
-    if (!botPlayerId) botPlayerId = foundId;
     currentPlayerId = foundId;
     return gameState.players[foundId];
   }
@@ -308,8 +306,8 @@ function isResourcePhase(player, actions) {
   return hasSelectableHand && hasResourceBtn;
 }
 
-async function cardToResource(state, actions) {
-  const player = getMyPlayerState(state);
+async function cardToResource(state, actions, playerId) {
+  const player = getMyPlayerState(state, playerId);
   if (!player) return null;
   const isRes = isResourcePhase(player, actions);
   if (!isRes) return null;
@@ -351,7 +349,7 @@ async function cardToResource(state, actions) {
   return null;
 }
 
-async function trySequences(state) {
+async function trySequences(state, playerId) {
   let actions = getAvailableActions(state);
   const filtered = actions.filter(a => !failedActionKeys.has(getActionKey(a)));
   if (filtered.length > 0) actions = filtered;
@@ -364,7 +362,7 @@ async function trySequences(state) {
   if (allowBtn && denyBtn) return allowBtn;
 
   // Distribute damage/healing among targets
-  const player = getMyPlayerState(state);
+  const player = getMyPlayerState(state, playerId);
   if (player?.promptState?.promptType === 'distributeAmongTargets') {
     const promptData = player.promptState.distributeAmongTargets;
     if (promptData) {
@@ -533,11 +531,11 @@ async function trySequences(state) {
   return null;
 }
 
-async function selectAiAction(state, isSelfPlay) {
+async function selectAiAction(state, isSelfPlay, playerId) {
   try {
     if (!state) return null;
 
-    const seqAction = await trySequences(state);
+    const seqAction = await trySequences(state, playerId);
     if (seqAction) return seqAction;
 
     let allActions = getAvailableActions(state);
@@ -562,7 +560,7 @@ async function selectAiAction(state, isSelfPlay) {
     }
 
     // Try card-to-resource first
-    const resourceAction = await cardToResource(state, actions);
+    const resourceAction = await cardToResource(state, actions, playerId);
     if (resourceAction) {
       console.log('cardToResource picked:', getActionKey(resourceAction));
       return resourceAction;
@@ -615,6 +613,21 @@ async function selectAiAction(state, isSelfPlay) {
         return alternatives[Math.floor(Math.random() * alternatives.length)];
       }
     }
+    // Safeguard: prefer clicking a card over done when cards are available and not in resource phase
+    if (chosen && chosen.type === 'menuButton' && (chosen.arg === 'done' || String(chosen.arg).toLowerCase() === 'done')) {
+      const cardActions = actions.filter(a => a.type === 'cardClicked');
+      const player = getMyPlayerState(state, playerId);
+      if (cardActions.length > 0 && !isResourcePhase(player, actions)) {
+        console.log(`Safeguard: preferring card click over done (${cardActions.length} cards available)`);
+        const model = cachedModel || await loadModel();
+        if (model && cardActions.length > 1) {
+          const stateTensor = encodeGameState(state);
+          const actionFeatures = encodeActions(cardActions);
+          return selectBestAction(model, stateTensor, actionFeatures, cardActions) || cardActions[0];
+        }
+        return cardActions[0];
+      }
+    }
     return chosen;
   } catch (e) {
     console.error('AI selection failed:', e);
@@ -622,14 +635,9 @@ async function selectAiAction(state, isSelfPlay) {
   }
 }
 
-function setBotPlayerId(id) {
-  botPlayerId = id;
-}
-
 module.exports = {
   getActionKey, getActionSetHash, getAvailableActions, getSelectableCardIds,
   getActivePlayerId, getMyPlayerState, isResourcePhase,
   describeAction, matchesMulliganAction, isCancelAction, planTextMatches,
-  cardToResource, trySequences, selectAiAction, findCardInfo, getCardName,
-  setBotPlayerId
+  cardToResource, trySequences, selectAiAction, findCardInfo, getCardName
 };
