@@ -6,17 +6,15 @@ const { promisify } = require('util');
 
 const execAsync = promisify(exec);
 
-const SSH_HOST = process.env.SSH_HOST || '192.168.1.157';
-const SSH_USER = process.env.SSH_USER || 'jordan';
+const SSH_HOST = (process.env.SSH_HOST || '192.168.1.157').trim();
+const SSH_USER = (process.env.SSH_USER || 'jordan').trim();
 const DATA_PATH = process.env.DATA_PATH || '/home/jordan/swu/swu-ai-trainer/server/data';
 const PORT = parseInt(process.env.PORT || '3456', 10);
 
 async function sshCmd(cmd) {
+  const fullCmd = `ssh -o ConnectTimeout=5 -o BatchMode=yes ${SSH_USER}@${SSH_HOST} "${cmd.replace(/"/g, '\\"')}"`;
   try {
-    const { stdout, stderr } = await execAsync(
-      `ssh -o ConnectTimeout=5 -o BatchMode=yes ${SSH_USER}@${SSH_HOST} "${cmd.replace(/"/g, '\\"')}"`,
-      { timeout: 15000, shell: true }
-    );
+    const { stdout } = await execAsync(fullCmd, { timeout: 15000, shell: true });
     return { ok: true, data: stdout.trimEnd() };
   } catch (e) {
     return { ok: false, error: e.stderr?.trim() || e.message };
