@@ -216,7 +216,7 @@ async function runBot(id, name) {
       console.log(`${name} game ended. Winner:`, data.winners);
       const winnerNames = (data.winners || []).map(w => w?.username || w?.name || w).join(',');
       await saveBotStatus(id, name, { state: 'requeuing', message: `Winner: ${winnerNames || data.winners}` }).catch(() => {});
-      await saveGameRecording(recording).catch(() => {});
+      await saveGameRecording(recording).catch(e => console.error(`${name} saveGameRecording failed:`, e?.message || e));
       gamesPlayed++;
       recording = null;
 

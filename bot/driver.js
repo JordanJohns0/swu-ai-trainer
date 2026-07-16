@@ -8,9 +8,11 @@ const WORKER_PATH = path.join(__dirname, 'worker.js');
 const DATA_DIR = path.join(__dirname, '..', 'server', 'data');
 const DECKS_PATH = path.join(DATA_DIR, 'decks.json');
 const RECORDINGS_PATH = path.join(DATA_DIR, 'recordings.json');
+const REC_DIR = path.join(DATA_DIR, 'recordings');
 
 const workers = new Map();
 const statusCache = new Map();
+const workerOutputs = new Map();
 
 function log(...args) {
   const t = new Date().toISOString().replace('T', ' ').substring(0, 19);
@@ -32,9 +34,28 @@ function readDecks() {
   return Array.isArray(decks) ? decks : [];
 }
 
+function loadAllRecordings() {
+  const results = [];
+  if (fs.existsSync(REC_DIR)) {
+    for (const f of fs.readdirSync(REC_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      try { results.push(JSON.parse(fs.readFileSync(path.join(REC_DIR, f), 'utf8'))); } catch {}
+    }
+  }
+  const old = readJSON(RECORDINGS_PATH);
+  if (Array.isArray(old)) {
+    for (const rec of old) {
+      if (rec && rec.gameId && !results.some(r => r.gameId === rec.gameId && r.playerName === rec.playerName)) {
+        results.push(rec);
+      }
+    }
+  }
+  return results;
+}
+
 function getMatchups() {
-  const recordings = readJSON(RECORDINGS_PATH);
-  if (!Array.isArray(recordings)) return { pairs: [], deckList: [] };
+  const recordings = loadAllRecordings();
+  if (recordings.length === 0) return { pairs: [], deckList: [] };
 
   const decks = readDecks();
   const deckNames = decks.map(d => d.name).filter(Boolean);
@@ -103,9 +124,17 @@ function addBot(botId, botName, deckName) {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc']
   });
 
-  let output = '';
-  child.stdout.on('data', (d) => { output += d.toString(); console.log(`[${botId}] ${d.toString().trimEnd()}`); });
-  child.stderr.on('data', (d) => { output += d.toString(); console.error(`[${botId}] ${d.toString().trimEnd()}`); });
+  workerOutputs.set(botId, '');
+  child.stdout.on('data', (d) => {
+    const s = d.toString();
+    workerOutputs.set(botId, (workerOutputs.get(botId) + s).slice(-10000));
+    console.log(`[${botId}] ${s.trimEnd()}`);
+  });
+  child.stderr.on('data', (d) => {
+    const s = d.toString();
+    workerOutputs.set(botId, (workerOutputs.get(botId) + s).slice(-10000));
+    console.error(`[${botId}] ${s.trimEnd()}`);
+  });
 
   child.on('message', (msg) => {
     if (msg && msg.type === 'status') {
@@ -118,13 +147,15 @@ function addBot(botId, botName, deckName) {
 
   child.on('exit', (code, signal) => {
     log(`${botId} exited (code=${code}, signal=${signal})`);
-    statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'exited', exitCode: code, message: `exited with code ${code}`, updatedAt: Date.now(), errors: output, deckName: deckName || botName || botId });
+    statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'exited', exitCode: code, message: `exited with code ${code}`, updatedAt: Date.now(), deckName: deckName || botName || botId });
+    workerOutputs.delete(botId);
     workers.delete(botId);
   });
 
   child.on('error', (err) => {
     log(`${botId} error: ${err.message}`);
-    statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'error', message: err.message, updatedAt: Date.now(), errors: output, deckName: deckName || botName || botId });
+    statusCache.set(botId, { id: botId, name: botName || deckName || botId, state: 'error', message: err.message, updatedAt: Date.now(), deckName: deckName || botName || botId });
+    workerOutputs.delete(botId);
     workers.delete(botId);
   });
 
@@ -150,19 +181,14 @@ function removeBot(name) {
 function initBotsFromDecks() {
   const decks = readDecks();
   const defaultDeck = 'cad-bane';
-  const INSTANCES_PER_DECK = 2;
   let spawned = 0;
 
   for (const deck of decks) {
     const deckName = deck.name;
     if (!deckName || deckName === defaultDeck) continue;
-    const baseId = sanitizeId(deckName);
-    for (let i = 1; i <= INSTANCES_PER_DECK; i++) {
-      const botId = `${baseId}-${i}`;
-      const botName = `${deckName} #${i}`;
-      const result = addBot(botId, botName, deckName);
-      if (result.ok) spawned++;
-    }
+    const botId = sanitizeId(deckName);
+    const result = addBot(botId, deckName, deckName);
+    if (result.ok) spawned++;
   }
 
   log(`initialized ${spawned} bot(s) from ${decks.length} custom deck(s)`);
@@ -211,6 +237,15 @@ const server = http.createServer(async (req, res) => {
     const matchups = getMatchups();
     log(`matchups: ${matchups.pairs.length} pairs`);
     sendJSON(res, 200, matchups);
+    return;
+  }
+
+  if (url.pathname === '/api/bot-logs' && method === 'GET') {
+    const id = url.searchParams.get('id');
+    if (!id) { sendJSON(res, 400, { error: 'id required' }); return; }
+    const output = workerOutputs.get(id);
+    if (output === undefined) { sendJSON(res, 404, { error: 'bot not found' }); return; }
+    sendJSON(res, 200, { id, lines: output.split('\n').filter(Boolean) });
     return;
   }
 

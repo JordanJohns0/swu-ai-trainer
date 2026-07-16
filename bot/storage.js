@@ -40,23 +40,64 @@ async function saveModelToFile(model) {
   await saveModelWeights(model.save());
 }
 
-async function loadGameRecordings() {
+function safeStringify(obj) {
+  const seen = new WeakSet();
+  return JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+    }
+    return value;
+  }, 2);
+}
+
+const REC_DIR = path.join(DATA_DIR, 'recordings');
+
+function loadAllRecordings() {
   ensureDir();
-  const p = path.join(DATA_DIR, 'recordings.json');
-  try {
-    const raw = fs.readFileSync(p, 'utf8');
-    return JSON.parse(raw);
-  } catch { return []; }
+  const results = [];
+  if (fs.existsSync(REC_DIR)) {
+    for (const f of fs.readdirSync(REC_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const raw = fs.readFileSync(path.join(REC_DIR, f), 'utf8');
+        const rec = JSON.parse(raw);
+        if (rec && rec.gameId) results.push(rec);
+      } catch {}
+    }
+  }
+  return results;
+}
+
+async function loadGameRecordings() {
+  const old = loadAllRecordings();
+  const oldFile = path.join(DATA_DIR, 'recordings.json');
+  if (fs.existsSync(oldFile)) {
+    try {
+      const raw = fs.readFileSync(oldFile, 'utf8');
+      const legacy = JSON.parse(raw);
+      if (Array.isArray(legacy)) {
+        for (const rec of legacy) {
+          if (rec && rec.gameId && !old.some(r => r.gameId === rec.gameId && r.playerName === rec.playerName)) {
+            old.push(rec);
+          }
+        }
+      }
+    } catch {}
+  }
+  return old;
 }
 
 async function saveGameRecording(recording) {
-  const recordings = await loadGameRecordings();
-  // Key on gameId + playerName so both players' recordings persist
-  const idx = recordings.findIndex(r => r.gameId === recording.gameId && r.playerName === recording.playerName);
-  if (idx >= 0) recordings[idx] = recording;
-  else recordings.push(recording);
   ensureDir();
-  fs.writeFileSync(path.join(DATA_DIR, 'recordings.json'), JSON.stringify(recordings, null, 2), 'utf8');
+  if (!fs.existsSync(REC_DIR)) fs.mkdirSync(REC_DIR, { recursive: true });
+  const safeName = (recording.playerName || 'unknown').replace(/[<>:"/\\|?*]/g, '_');
+  const filePath = path.join(REC_DIR, `${recording.gameId}_${safeName}.json`);
+  const out = safeStringify(recording);
+  if (out === undefined) { console.error('saveGameRecording: safeStringify returned undefined'); return; }
+  const tmp = filePath + '.tmp';
+  fs.writeFileSync(tmp, out, 'utf8');
+  fs.renameSync(tmp, filePath);
 }
 
 async function loadTrainingStats() {

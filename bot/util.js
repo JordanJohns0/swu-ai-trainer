@@ -236,6 +236,18 @@ function getAvailableActions(gameState) {
         break;
       }
     }
+    // 6th pass: Number prompt (e.g. "Choose a number" for damage/health)
+    for (const playerId of Object.keys(gameState.players)) {
+      const player = gameState.players[playerId];
+      const prompt = player?.promptState;
+      if (prompt && prompt.promptType === 'number') {
+        const min = prompt.selectNumber?.min ?? 0;
+        const max = prompt.selectNumber?.max ?? 9;
+        const val = Math.floor((max > min ? (max - min) / 2 : 0) + min);
+        actions.push({ type: 'menuButton', arg: String(val), uuid: prompt.promptUuid || '', command: '', text: String(val) });
+        break;
+      }
+    }
   }
   // cardClicked crashes displayCards prompts (BaseStep.onCardClicked throws), so skip when any displayCards+selectCardMode is active
   const hasDisplayCardSelect = gameState?.players && Object.values(gameState.players).some(p => {

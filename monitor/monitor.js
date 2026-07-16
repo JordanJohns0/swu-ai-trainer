@@ -176,7 +176,13 @@ async function getFallbackBotStatuses() {
   const parts = r.data.split('===BOTSTATUS===').filter(Boolean);
   return parts.map(p => {
     try { return JSON.parse(p.trim()); } catch { return null; }
-  }).filter(Boolean);
+  }).filter(Boolean).filter(s => {
+    // Exclude stale artifacts from old experiments
+    if (!s.id) return false;
+    if (s.id.endsWith('-1') || s.id.endsWith('-2')) return false;
+    if (s.id === 'bot1' || s.id === 'bot2') return false;
+    return true;
+  });
 }
 
 function sendJSON(res, status, data) {
@@ -443,6 +449,16 @@ const server = http.createServer(async (req, res) => {
     const r = await saveDecks(decks);
     if (r.ok) sendJSON(res, 200, { ok: true });
     else sendJSON(res, 500, { error: r.error });
+    return;
+  }
+
+  // Bot logs proxy to driver
+  if (url.pathname === '/api/bot-logs' && method === 'GET') {
+    const id = url.searchParams.get('id');
+    if (!id) { sendJSON(res, 400, { error: 'id required' }); return; }
+    const r = await driverCurl(`/api/bot-logs?id=${encodeURIComponent(id)}`);
+    if (!r.ok || r.data === '___DRIVER_DOWN___') { sendJSON(res, 502, { error: 'driver not available' }); return; }
+    try { sendJSON(res, 200, JSON.parse(r.data)); } catch { sendJSON(res, 502, { error: 'bad response' }); }
     return;
   }
 
