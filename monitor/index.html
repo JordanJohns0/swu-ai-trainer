@@ -158,6 +158,7 @@
   .matchup-table th { color: var(--dim); font-weight: 500; font-size: 9px; text-transform: uppercase; }
   .matchup-table td.left { text-align: left; color: var(--dim); }
   .matchup-table .highlight { color: var(--accent); font-weight: 600; }
+  .matchup-table .time-col { color: var(--dim); font-size: 9px; white-space: nowrap; }
   .matchup-empty { color: var(--dim); font-size: 11px; padding: 8px 0; text-align: center; }
 
   .mem-bar {
@@ -307,6 +308,14 @@ const REFRESH_INTERVAL = 2;
 let countdown = REFRESH_INTERVAL;
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function timeAgo(ts) {
+  if (!ts) return '-';
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return Math.floor(diff / 86400000) + 'd ago';
+}
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -451,10 +460,11 @@ function renderMatchups(matchups) {
     return;
   }
   matchupsHadData = true;
-  let html = '<table class="matchup-table"><thead><tr><th>Deck A</th><th>Deck B</th><th>A Wins</th><th>B Wins</th><th>Win%</th><th>Games</th></tr></thead><tbody>';
+  let html = '<table class="matchup-table"><thead><tr><th>Deck A</th><th>Deck B</th><th>A Wins</th><th>B Wins</th><th>Win%</th><th>Games</th><th>Last Game</th></tr></thead><tbody>';
   for (const p of matchups.pairs) {
     const total = p.aWins + p.bWins || 1;
     const pct = ((Math.max(p.aWins, p.bWins) / total) * 100).toFixed(0);
+    const lastGame = p.lastRecordedAt ? timeAgo(p.lastRecordedAt) : '-';
     html += '<tr>' +
       '<td class="left">' + escHtml(p.deckA) + '</td>' +
       '<td class="left">' + escHtml(p.deckB) + '</td>' +
@@ -462,6 +472,7 @@ function renderMatchups(matchups) {
       '<td>' + p.bWins + '</td>' +
       '<td>' + pct + '%</td>' +
       '<td>' + p.total + '</td>' +
+      '<td class="time-col">' + lastGame + '</td>' +
     '</tr>';
   }
   html += '</tbody></table>';
@@ -509,8 +520,27 @@ async function refresh() {
 
   // Training banner
   const tbEl = document.getElementById('trainingBanner');
-  if (trainer && trainer.state === 'training') {
-    tbEl.innerHTML = '<div class="training-banner"><div class="spinner"></div> <strong>Training in progress...</strong></div>';
+  const tp = data.trainingProgress;
+  if (tp && tp.startedAt) {
+    const endTs = tp.completedAt || Date.now();
+    const elapsed = Math.floor((endTs - tp.startedAt) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    let detail = '';
+    if (tp.epoch && tp.totalEpochs) {
+      detail += ` epoch ${tp.epoch}/${tp.totalEpochs}`;
+    }
+    if (tp.prefAcc !== undefined && tp.prefAcc !== null) {
+      detail += ` | accuracy: ${(tp.prefAcc * 100).toFixed(2)}%`;
+    }
+    if (tp.games) {
+      detail += ` | ${tp.games} games`;
+    }
+    if (tp.completedAt) {
+      tbEl.innerHTML = '<div class="training-banner"><strong>Training complete</strong> — ' + mins + 'm ' + secs + 's' + detail + '</div>';
+    } else {
+      tbEl.innerHTML = '<div class="training-banner"><div class="spinner"></div> <strong>Training in progress...</strong>' + mins + 'm ' + secs + 's' + detail + '</div>';
+    }
   } else {
     tbEl.innerHTML = '';
   }

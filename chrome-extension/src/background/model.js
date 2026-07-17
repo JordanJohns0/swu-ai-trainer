@@ -473,11 +473,45 @@ function clearCachedModel() { cachedModel = null; }
 async function loadModel() {
   if (cachedModel) return cachedModel;
   const model = new NeuralNet();
+  let loaded = false;
+
+  // Try server weights first via sync server URL
   try {
-    const w = await loadModelWeights();
-    if (w && w.layers) model.setWeights(w);
-    else console.log('No saved weights, using fresh model');
-  } catch (e) { console.warn('Model load failed, using fresh', e); }
+    const base = await getSyncServerUrl();
+    if (base) {
+      const url = base.replace(/\/+$/, '') + '/api/weights';
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const w = await res.json();
+        if (w && w.layers && w.layers.length > 0) {
+          model.setWeights(w);
+          loaded = true;
+          console.log('Loaded server weights');
+          // Cache server weights locally for offline fallback
+          try { await saveModelWeights(w); } catch {}
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Server weights fetch failed:', e.message || e);
+  }
+
+  // Fallback to local IndexedDB
+  if (!loaded) {
+    try {
+      const w = await loadModelWeights();
+      if (w && w.layers) {
+        model.setWeights(w);
+        loaded = true;
+        console.log('Loaded local weights');
+      }
+    } catch (e) { console.warn('Local weights load failed', e); }
+  }
+
+  if (!loaded) console.log('No saved weights, using fresh model');
   cachedModel = model;
   return model;
 }

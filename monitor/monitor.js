@@ -49,7 +49,7 @@ async function sshCmd(cmd) {
       cmd
     ];
     log(`SSH: ${cmd.substring(0, 120)}`);
-    const { stdout } = await execFileAsync('ssh', args, { timeout: 15000 });
+    const { stdout } = await execFileAsync('ssh', args, { timeout: 30000, maxBuffer: 5 * 1024 * 1024 });
     const result = stdout.trimEnd();
     log(`SSH OK (${result.length} chars)`);
     return { ok: true, data: result };
@@ -345,7 +345,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/status' && method === 'GET') {
-    const [sshCheck, stats, recordingsCount, serverInfo, weightsMtime, recordingsMtime, fallbackStatuses, driverBots] = await Promise.all([
+    const [sshCheck, stats, recordingsCount, serverInfo, weightsMtime, recordingsMtime, fallbackStatuses, driverBots, trainingProg] = await Promise.all([
       sshCmd('echo ok'),
       readFile('stats.json'),
       getArrayLength('recordings.json'),
@@ -353,7 +353,8 @@ const server = http.createServer(async (req, res) => {
       getFileMtime('weights.json'),
       getFileMtime('recordings.json'),
       getFallbackBotStatuses(),
-      getDriverBots()
+      getDriverBots(),
+      driverCurl('/api/training-progress')
     ]);
 
     // Priority: driver status > tunnel-pushed > file-based fallback
@@ -372,6 +373,11 @@ const server = http.createServer(async (req, res) => {
 
     log(`status: ${merged.size} bots, ${recordingsCount} recordings, tunnel=${tunnelOk}, ssh=${sshCheck.ok}, driver=${driverOk}`);
 
+    let trainingProgressData = null;
+    if (trainingProg && trainingProg.ok && trainingProg.data && trainingProg.data !== '___DRIVER_DOWN___') {
+      try { trainingProgressData = JSON.parse(trainingProg.data); } catch {}
+    }
+
     sendJSON(res, 200, {
       timestamp: Date.now(),
       stats: stats || { gamesTrained: 0, accuracy: 0, examples: 0, lastTrainedAt: null },
@@ -384,8 +390,21 @@ const server = http.createServer(async (req, res) => {
       sshError: sshCheck.ok ? null : sshCheck.error,
       tunnelOk,
       driverOk,
-      driverError: driverErr
+      driverError: driverErr,
+      trainingProgress: trainingProgressData
     });
+    return;
+  }
+
+  if (url.pathname === '/api/weights' && method === 'GET') {
+    if (driverOk) {
+      const r = await driverCurl('/api/weights');
+      if (r.ok && r.data && r.data !== '___DRIVER_DOWN___') {
+        try { sendJSON(res, 200, JSON.parse(r.data)); return; } catch {}
+      }
+    }
+    const w = await readFile('weights.json');
+    sendJSON(res, 200, w || { layers: [] });
     return;
   }
 

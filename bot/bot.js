@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const io = require('socket.io-client');
-const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats, saveBotStatus } = require('./storage');
+const { loadModel, saveModelToFile, saveGameRecording, loadGameRecordings, loadTrainingStats, saveTrainingStats, saveTrainingProgress, saveBotStatus } = require('./storage');
 const { selectAiAction, getActionKey, getActionSetHash, getSelectableCardIds, getAvailableActions, getMyPlayerState } = require('./util');
 const { trainModelRanking } = require('./training');
 const { getDeck } = require('./decks');
@@ -12,7 +12,9 @@ const BOT_NAME = process.env.BOT_NAME || 'Bot';
 const BOT_ID = process.env.BOT_ID || 'bot1';
 const DECK_NAME = process.env.DECK_NAME || 'cad-bane';
 const SELF_PLAY_MODE = process.env.SELF_PLAY === 'true' || process.env.SELF_PLAY === '1';
-const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '50', 10);
+const TRAIN_EVERY_N = parseInt(process.env.TRAIN_EVERY_N || '100', 10);
+const TRAIN_MAX_GAMES = parseInt(process.env.TRAIN_MAX_GAMES || '100', 10);
+const TRAIN_SAMPLE_STATES = parseInt(process.env.TRAIN_SAMPLE_STATES || '5', 10);
 
 const serverUrl = new URL(SERVER_URL);
 const SERVER_HOST = serverUrl.hostname;
@@ -91,13 +93,26 @@ function createSocket(id, name) {
       reconnectionAttempts: Infinity
     });
 
-    sock.on('connect_error', (err) => console.error(`${name} connection error:`, err.message));
-    sock.on('disconnect', (reason) => {
-      if (reason !== 'io server disconnect') console.log(`${name} disconnected:`, reason);
-      if (reason === 'io server disconnect') {
-        console.log(`${name} server disconnected us, restarting...`);
-        setTimeout(() => startBot(id, name).catch(console.error), 5000);
+    let connectErrors = 0;
+    sock.on('connect_error', (err) => {
+      console.error(`${name} connection error:`, err.message);
+      connectErrors++;
+      if (connectErrors >= 5) {
+        console.log(`${name} too many connection errors, restarting...`);
+        connectErrors = 0;
+        sock.close();
+        startBot(id, name).catch(console.error);
       }
+    });
+    sock.on('connect', () => { connectErrors = 0; });
+    let reconnectTimer = null;
+    sock.on('disconnect', (reason) => {
+      console.log(`${name} disconnected:`, reason);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        sock.close();
+        startBot(id, name).catch(console.error);
+      }, 5000);
     });
 
     let settled = false;
@@ -211,9 +226,9 @@ async function runBot(id, name) {
     if (data.winners && data.winners.length > 0 && !pendingRequeue) {
       pendingRequeue = true;
       gameId = null;
-      recording.winner = data.winners;
+      recording.winner = (data.winners || []).map(w => (w && w.username) || (w && w.name) || w);
       recording.completedAt = Date.now();
-      console.log(`${name} game ended. Winner:`, data.winners);
+      console.log(`${name} game ended. Winner:`, recording.winner);
       const winnerNames = (data.winners || []).map(w => w?.username || w?.name || w).join(',');
       await saveBotStatus(id, name, { state: 'requeuing', message: `Winner: ${winnerNames || data.winners}` }).catch(() => {});
       await saveGameRecording(recording).catch(e => console.error(`${name} saveGameRecording failed:`, e?.message || e));
@@ -356,26 +371,95 @@ async function runBot(id, name) {
   });
 }
 
+const TRAINING_LOCK_PATH = path.join(__dirname, '..', 'server', 'data', 'training.lock');
+
+function acquireTrainingLock(botName) {
+  try {
+    if (fs.existsSync(TRAINING_LOCK_PATH)) {
+      const raw = fs.readFileSync(TRAINING_LOCK_PATH, 'utf8');
+      const lock = JSON.parse(raw);
+      if (lock.pid) {
+        try { process.kill(lock.pid, 0); return false; } catch { /* stale */ }
+      }
+    }
+  } catch {}
+  fs.writeFileSync(TRAINING_LOCK_PATH, JSON.stringify({ pid: process.pid, botName, startedAt: Date.now() }), 'utf8');
+  return true;
+}
+
+function releaseTrainingLock() {
+  try {
+    if (fs.existsSync(TRAINING_LOCK_PATH)) {
+      const raw = fs.readFileSync(TRAINING_LOCK_PATH, 'utf8');
+      const lock = JSON.parse(raw);
+      if (lock.pid === process.pid) fs.unlinkSync(TRAINING_LOCK_PATH);
+    }
+  } catch {}
+}
+
 async function runTraining() {
   console.log('Batch training...');
   await saveBotStatus('_trainer', 'Training', { state: 'training', message: 'Batch training in progress' }).catch(() => {});
-  const recordings = await loadGameRecordings();
-  if (recordings.length === 0) return;
 
-  const model = await loadModel();
-  if (!model) return;
+  if (!acquireTrainingLock(BOT_NAME)) {
+    console.log('Training lock held by another process, skipping');
+    try { fs.unlinkSync(path.join(__dirname, '..', 'server', 'data', 'bot_status__trainer.json')); } catch {}
+    return;
+  }
 
-  console.log(`Training on ${recordings.length} games...`);
-  const history = await trainModelRanking(model, recordings);
-  await saveModelToFile(model);
+  try {
+    const stats = await loadTrainingStats();
+    const cutoff = stats.lastTrainingCompletedAt || 0;
+    let recordings = await loadGameRecordings();
 
-  const acc = history.history.pref_acc[history.history.pref_acc.length - 1];
-  const stats = await loadTrainingStats();
-  stats.gamesTrained = (stats.gamesTrained || 0) + recordings.length;
-  stats.lastTrainedAt = Date.now();
-  stats.accuracy = acc;
-  await saveTrainingStats(stats);
-  console.log(`Training done: pref_acc=${(acc * 100).toFixed(2)}%`);
+    // Only train on new games since last training completed
+    const newGames = cutoff > 0
+      ? recordings.filter(r => (r.completedAt || r.timestamp || 0) > cutoff)
+      : recordings;
+
+    if (newGames.length === 0) {
+      console.log(`No new games since last training (cutoff=${new Date(cutoff).toISOString()}), skipping`);
+      return;
+    }
+
+    const model = await loadModel();
+    if (!model) return;
+
+    // Cap new games
+    let games = newGames;
+    if (games.length > TRAIN_MAX_GAMES) {
+      games = games.slice(-TRAIN_MAX_GAMES);
+    }
+    console.log(`Training on ${games.length} new games (${recordings.length} total, cutoff=${new Date(cutoff).toISOString()})...`);
+    const progress = { startedAt: Date.now(), games: games.length, totalNewGames: newGames.length };
+    saveTrainingProgress(progress);
+
+    const history = await trainModelRanking(model, games, { sampleStates: TRAIN_SAMPLE_STATES }, (epoch, totalEpochs, prefAcc) => {
+      progress.epoch = epoch;
+      progress.totalEpochs = totalEpochs;
+      progress.prefAcc = prefAcc;
+      saveTrainingProgress(progress);
+    });
+    await saveModelToFile(model);
+
+    const acc = history.history.pref_acc[history.history.pref_acc.length - 1];
+    stats.gamesTrained = (stats.gamesTrained || 0) + newGames.length;
+    stats.lastTrainedAt = Date.now();
+    stats.lastTrainingCompletedAt = Date.now();
+    stats.accuracy = acc;
+    await saveTrainingStats(stats);
+    console.log(`Training done: pref_acc=${(acc * 100).toFixed(2)}% on ${newGames.length} new games`);
+
+    progress.epoch = progress.totalEpochs || 0;
+    progress.prefAcc = acc;
+    progress.completedAt = Date.now();
+    saveTrainingProgress(progress);
+  } catch (e) {
+    console.error('Training error:', e.message || e);
+  } finally {
+    releaseTrainingLock();
+  }
+
   try { fs.unlinkSync(path.join(__dirname, '..', 'server', 'data', 'bot_status__trainer.json')); } catch {}
 }
 

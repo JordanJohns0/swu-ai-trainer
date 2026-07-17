@@ -100,6 +100,27 @@ async function saveGameRecording(recording) {
   fs.renameSync(tmp, filePath);
 }
 
+const TRAINING_PROGRESS_PATH = path.join(DATA_DIR, 'training_progress.json');
+
+async function saveTrainingProgress(progress) {
+  ensureDir();
+  try {
+    fs.writeFileSync(TRAINING_PROGRESS_PATH, JSON.stringify(progress, null, 2), 'utf8');
+  } catch {}
+}
+
+async function loadTrainingProgress() {
+  ensureDir();
+  try {
+    const raw = fs.readFileSync(TRAINING_PROGRESS_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+async function clearTrainingProgress() {
+  try { fs.unlinkSync(TRAINING_PROGRESS_PATH); } catch {}
+}
+
 async function loadTrainingStats() {
   ensureDir();
   const p = path.join(DATA_DIR, 'stats.json');
@@ -162,5 +183,6 @@ module.exports = {
   loadModel, saveModelToFile,
   loadGameRecordings, saveGameRecording,
   loadTrainingStats, saveTrainingStats,
+  saveTrainingProgress, loadTrainingProgress, clearTrainingProgress,
   saveBotStatus
 };

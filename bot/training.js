@@ -5,12 +5,12 @@ function yieldToEventLoop() {
   return new Promise(resolve => setImmediate(resolve));
 }
 
-async function trainModelRanking(model, games, params = {}) {
+async function trainModelRanking(model, games, params = {}, onProgress) {
   const {
     lrStart = 0.003, lrEnd = 0.001,
     marginWinStart = 2.0, marginWinEnd = 1.0,
     marginLossStart = 0.6, marginLossEnd = 0.3,
-    epochs = 5, topK = 3
+    epochs = 5, topK = 3, sampleStates = 1
   } = params;
   const prefAccs = [];
   for (let epoch = 0; epoch < epochs; epoch++) {
@@ -30,7 +30,7 @@ async function trainModelRanking(model, games, params = {}) {
       const winners = Array.isArray(game.winner) ? game.winner : (game.winner ? [game.winner] : null);
       const botWon = winners && game.playerId ? winners.includes(game.playerId) : null;
       if (botWon === null) continue;
-      for (let i = 0; i < game.states.length - 1; i++) {
+      for (let i = 0; i < game.states.length - 1; i += sampleStates) {
         const stateObj = game.states[i]?.state;
         if (!stateObj || !stateObj.players) continue;
         const takenActions = game.actions.filter(a => a.stateIndex === i);
@@ -70,6 +70,7 @@ async function trainModelRanking(model, games, params = {}) {
     const avgViolations = totalStates > 0 ? totalViolations / totalStates : 0;
     console.log(`Epoch ${epoch + 1}: lr=${epochLr.toFixed(5)} mWin=${epochMarginWin.toFixed(3)} mLoss=${epochMarginLoss.toFixed(3)} topK=${topK} avg_violations=${avgViolations.toFixed(4)} pref_acc=${(prefAcc * 100).toFixed(2)}% (${correctPref}/${totalPref})`);
     prefAccs.push(prefAcc);
+    if (onProgress) onProgress(epoch + 1, epochs, prefAcc);
     await yieldToEventLoop();
   }
   return { history: { pref_acc: prefAccs } };
