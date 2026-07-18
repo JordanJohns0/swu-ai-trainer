@@ -1,0 +1,13 @@
+{
+  "name": "swu-ai-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless self-play training bot for SWU AI Trainer",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.0"
+  }
+}

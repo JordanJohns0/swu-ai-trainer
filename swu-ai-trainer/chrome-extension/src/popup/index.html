@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>SWU AI Trainer</h1>
+      <span id="connection-status" class="status-dot offline"></span>
+    </header>
+
+    <section id="status-section" class="card">
+      <div class="stat-row"><span>Recorded Games</span><span id="game-count">0</span></div>
+      <div class="stat-row"><span>Trained Games</span><span id="trained-count">0</span></div>
+      <div class="stat-row"><span>Model Accuracy</span><span id="model-accuracy">--</span></div>
+      <div class="stat-row"><span>Active Game</span><span id="active-game">No</span></div>
+      <div class="stat-row"><span>Page Connected</span><span id="page-status">No</span></div>
+    </section>
+
+    <section id="network-section" class="card">
+      <div class="section-title">Neural Network</div>
+      <div class="network-viz" id="network-viz"></div>
+    </section>
+
+    <section id="plan-section" class="card" style="display:none">
+      <div class="section-title">Turn Plan</div>
+      <div id="plan-header" class="plan-header"></div>
+      <div id="plan-items" class="plan-items"></div>
+    </section>
+
+    <section id="controls-section" class="card">
+      <label class="toggle-row">
+        <span>Record Games</span>
+        <input type="checkbox" id="toggle-recording" checked>
+        <span class="toggle-slider"></span>
+      </label>
+      <label class="toggle-row">
+        <span>Show AI Recommendations</span>
+        <input type="checkbox" id="toggle-ai-play" disabled>
+        <span class="toggle-slider"></span>
+      </label>
+      <label class="toggle-row">
+        <span>AI Auto-Play</span>
+        <input type="checkbox" id="toggle-auto-play">
+        <span class="toggle-slider"></span>
+      </label>
+      <label class="toggle-row">
+        <span>Auto Requeue</span>
+        <input type="checkbox" id="toggle-requeue">
+        <span class="toggle-slider"></span>
+      </label>
+      <label class="toggle-row">
+        <span>Auto-Train After Game</span>
+        <input type="checkbox" id="toggle-auto-train">
+        <span class="toggle-slider"></span>
+      </label>
+    </section>
+
+    <section id="wait-section" class="card" style="display:none">
+      <div class="stat-row"><span>Min Wait</span><input type="range" id="min-wait" min="0.5" max="5" step="0.1" value="1" style="flex:1;margin:0 8px"><span id="min-wait-val" style="min-width:38px;text-align:right">1.0s</span></div>
+      <div class="stat-row"><span>Max Wait</span><input type="range" id="max-wait" min="1" max="10" step="0.1" value="3" style="flex:1;margin:0 8px"><span id="max-wait-val" style="min-width:38px;text-align:right">3.0s</span></div>
+    </section>
+
+    <section id="actions-section" class="card">
+      <button id="btn-train" class="btn primary">Train Model Now</button>
+      <button id="btn-trigger-ai" class="btn secondary" disabled>Trigger AI Move</button>
+      <button id="btn-export" class="btn secondary">Export Data</button>
+      <button id="btn-clear" class="btn danger">Clear All Data</button>
+      <button id="btn-diag" class="btn secondary">Diagnose WebSocket</button>
+      <button id="btn-dashboard" class="btn secondary">Open Dashboard</button>
+    </section>
+    <section id="server-section" class="card" style="display:flex;flex-direction:row;gap:6px;align-items:center">
+      <span style="font-size:11px;color:var(--text-dim)">Server:</span>
+      <input type="text" id="server-url" value="http://localhost:3456" style="flex:1;background:#0d1117;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 6px;font-size:11px">
+      <button id="btn-sync" class="btn" style="font-size:11px;padding:3px 8px">Sync</button>
+    </section>
+    <section id="diag-section" class="card" style="display:none;font-size:11px;word-break:break-all;">
+      <div id="diag-content"></div>
+    </section>
+
+    <section id="log-section" class="card">
+      <div id="log"></div>
+    </section>
+  </div>
+  <script src="index.js"></script>
+</body>
+</html>

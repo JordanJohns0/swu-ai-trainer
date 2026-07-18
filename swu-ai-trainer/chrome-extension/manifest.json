@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "SWU AI Trainer",
+  "version": "1.0.0",
+  "description": "Neural network AI for Star Wars: Unlimited on Karabast — learns from your games and can play by itself",
+  "permissions": [
+    "storage",
+    "unlimitedStorage"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "host_permissions": [
+    "https://karabast.net/*",
+    "https://www.karabast.net/*",
+    "http://localhost:3000/*",
+    "http://localhost:3456/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://karabast.net/*", "https://www.karabast.net/*", "http://localhost:3000/*"],
+      "js": ["src/content/main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://karabast.net/*", "https://www.karabast.net/*", "http://localhost:3000/*"],
+      "js": ["src/content/bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "background": {
+    "service_worker": "src/background/index.js"
+  },
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "SWU AI Trainer"
+  }
+}
